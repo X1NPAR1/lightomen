@@ -234,6 +234,28 @@ impl LightOmenApp {
         }
     }
 
+    /// Read live CPU maximum boost frequency across active cores in GHz
+    fn read_cpu_ghz() -> Option<f32> {
+        let mut max_khz = 0u32;
+        for i in 0..16 {
+            let path = format!("/sys/devices/system/cpu/cpufreq/policy{}/scaling_cur_freq", i);
+            if let Ok(s) = fs::read_to_string(&path) {
+                if let Ok(khz) = s.trim().parse::<u32>() {
+                    if khz > max_khz {
+                        max_khz = khz;
+                    }
+                }
+            } else {
+                break;
+            }
+        }
+        if max_khz > 0 {
+            Some(max_khz as f32 / 1_000_000.0)
+        } else {
+            None
+        }
+    }
+
     fn send_ipc(cmd: u8, data: &[u8]) {
         let stream_opt = UnixStream::connect(SOCKET_PATH)
             .or_else(|_| UnixStream::connect(ALT_SOCKET_PATH));
@@ -548,7 +570,16 @@ impl LightOmenApp {
                     );
                     ui.add_space(6.0);
                     let f1 = self.status.telemetry.fan1_rpm;
-                    let fan_label = if f1 > 0 { format!("CPU fan: {} rpm", f1) } else { "CPU fan: 0 rpm (Quiet)".to_string() };
+                    let ghz_str = if let Some(ghz) = Self::read_cpu_ghz() {
+                        format!(" · {:.2} GHz", ghz)
+                    } else {
+                        String::new()
+                    };
+                    let fan_label = if f1 > 0 {
+                        format!("CPU fan: {} rpm{}", f1, ghz_str)
+                    } else {
+                        format!("CPU fan: 0 rpm (Quiet){}", ghz_str)
+                    };
                     ui.label(egui::RichText::new(fan_label).font(FontId::new(11.5, FontFamily::Monospace)).color(accent));
                 });
 
