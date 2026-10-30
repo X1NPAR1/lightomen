@@ -1323,273 +1323,278 @@ impl LightOmenApp {
         ui.label(egui::RichText::new("SETTINGS & OMEN KEY").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_HI).strong());
         ui.add_space(6.0);
 
-        // 1. OMEN KEY LEARNING
-        egui::Frame::none()
-            .fill(CARD_BG)
-            .stroke(Stroke::new(1.0, LINE_BORDER))
-            .rounding(Rounding::same(8.0))
-            .inner_margin(14.0)
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.label(egui::RichText::new("OMEN KEY LEARNING").font(FontId::new(10.5, FontFamily::Proportional)).color(TEXT_DIM));
-                ui.add_space(4.0);
+                // 1. OMEN KEY LEARNING
+                egui::Frame::none()
+                    .fill(CARD_BG)
+                    .stroke(Stroke::new(1.0, LINE_BORDER))
+                    .rounding(Rounding::same(8.0))
+                    .inner_margin(14.0)
+                    .show(ui, |ui| {
+                        ui.label(egui::RichText::new("OMEN KEY LEARNING").font(FontId::new(10.5, FontFamily::Proportional)).color(TEXT_DIM));
+                        ui.add_space(4.0);
 
-                let is_learning = self.status.is_learning_key == 1;
+                        let is_learning = self.status.is_learning_key == 1;
 
-                ui.horizontal(|ui| {
-                    let dot_color = if is_learning { COLOR_WARN } else { COLOR_OK };
-                    let (dot_rect, _) = ui.allocate_exact_size(Vec2::new(10.0, 10.0), Sense::hover());
-                    ui.painter().circle_filled(dot_rect.center(), 4.0, dot_color);
+                        ui.horizontal(|ui| {
+                            let dot_color = if is_learning { COLOR_WARN } else { COLOR_OK };
+                            let (dot_rect, _) = ui.allocate_exact_size(Vec2::new(10.0, 10.0), Sense::hover());
+                            ui.painter().circle_filled(dot_rect.center(), 4.0, dot_color);
 
-                    if is_learning {
-                        let elapsed = self.learn_started_at.map_or(0, |t| t.elapsed().as_secs());
-                        let remain = 10u64.saturating_sub(elapsed);
-                        ui.label(egui::RichText::new(format!("Press your OMEN key now… ({} s)", remain)).font(FontId::new(13.0, FontFamily::Proportional)).color(COLOR_WARN).strong());
+                            if is_learning {
+                                let elapsed = self.learn_started_at.map_or(0, |t| t.elapsed().as_secs());
+                                let remain = 10u64.saturating_sub(elapsed);
+                                ui.label(egui::RichText::new(format!("Press your OMEN key now… ({} s)", remain)).font(FontId::new(13.0, FontFamily::Proportional)).color(COLOR_WARN).strong());
 
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button("Cancel").clicked() {
-                                Self::send_ipc(CMD_CANCEL_KEY_LEARN, &[]);
-                                self.status.is_learning_key = 0;
-                                self.learn_started_at = None;
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.button("Cancel").clicked() {
+                                        Self::send_ipc(CMD_CANCEL_KEY_LEARN, &[]);
+                                        self.status.is_learning_key = 0;
+                                        self.learn_started_at = None;
+                                    }
+                                });
+                            } else {
+                                let key_code = self.status.config.hotkey_code;
+                                let label_text = if key_code != 0 {
+                                    format!("OMEN Key: Keycode {} ({})", key_code, Self::keycode_display_name(key_code))
+                                } else {
+                                    "OMEN Key: Keycode 149 (Default)".to_string()
+                                };
+
+                                ui.label(egui::RichText::new(label_text).font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
+
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let btn_label = if key_code != 0 { "Relearn" } else { "Learn" };
+                                    let learn_btn = ui.add(
+                                        egui::Button::new(egui::RichText::new(btn_label).font(FontId::new(12.0, FontFamily::Proportional)).color(accent))
+                                            .fill(PILL_BG)
+                                            .stroke(Stroke::new(1.0, LINE_BORDER))
+                                            .rounding(Rounding::same(4.0)),
+                                    );
+
+                                    if learn_btn.clicked() {
+                                        Self::send_ipc(CMD_START_KEY_LEARN, &[]);
+                                        self.status.is_learning_key = 1;
+                                        self.learn_started_at = Some(Instant::now());
+                                    }
+                                });
                             }
                         });
-                    } else {
-                        let key_code = self.status.config.hotkey_code;
-                        let label_text = if key_code != 0 {
-                            format!("OMEN Key: Keycode {} ({})", key_code, Self::keycode_display_name(key_code))
-                        } else {
-                            "OMEN Key: Keycode 149 (Default)".to_string()
-                        };
 
-                        ui.label(egui::RichText::new(label_text).font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
+                        ui.add_space(4.0);
+                        ui.label(egui::RichText::new("Binds the physical OMEN hotkey to summon or hide the window on Wayland (Default: 149).").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
+                    });
 
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let btn_label = if key_code != 0 { "Relearn" } else { "Learn" };
-                            let learn_btn = ui.add(
-                                egui::Button::new(egui::RichText::new(btn_label).font(FontId::new(12.0, FontFamily::Proportional)).color(accent))
-                                    .fill(PILL_BG)
-                                    .stroke(Stroke::new(1.0, LINE_BORDER))
-                                    .rounding(Rounding::same(4.0)),
-                            );
+                ui.add_space(8.0);
 
-                            if learn_btn.clicked() {
-                                Self::send_ipc(CMD_START_KEY_LEARN, &[]);
-                                self.status.is_learning_key = 1;
-                                self.learn_started_at = Some(Instant::now());
-                            }
+                // 2. SYSTEM & SENSORS
+                egui::Frame::none()
+                    .fill(CARD_BG)
+                    .stroke(Stroke::new(1.0, LINE_BORDER))
+                    .rounding(Rounding::same(8.0))
+                    .inner_margin(14.0)
+                    .show(ui, |ui| {
+                        ui.label(egui::RichText::new("AUTOMATION & SENSORS").font(FontId::new(10.5, FontFamily::Proportional)).color(TEXT_DIM));
+                        ui.add_space(4.0);
+
+                        // Autostart
+                        ui.horizontal(|ui| {
+                            ui.vertical(|ui| {
+                                ui.label(egui::RichText::new("Start at Login (LightOmen Tray)").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
+                                ui.label(egui::RichText::new("Launch lightomen-tray automatically on user login.").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
+                            });
+
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                let mut auto = self.status.config.autostart == 1;
+                                if ui.checkbox(&mut auto, "").changed() {
+                                    self.status.config.autostart = if auto { 1 } else { 0 };
+                                    Self::toggle_autostart(auto);
+                                    Self::send_ipc(CMD_SET_AUTOSTART, &[self.status.config.autostart]);
+                                }
+                            });
                         });
-                    }
-                });
 
-                ui.add_space(4.0);
-                ui.label(egui::RichText::new("Binds the physical OMEN hotkey to summon or hide the window on Wayland (Default: 149).").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
-            });
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.add_space(8.0);
 
-        ui.add_space(8.0);
+                        // Probe interval
+                        ui.horizontal(|ui| {
+                            ui.vertical(|ui| {
+                                ui.label(egui::RichText::new("Hardware Probe Interval").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
+                                ui.label(egui::RichText::new("Sensor refresh rate (0.5s to 3.0s).").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
+                            });
 
-        // 2. SYSTEM & SENSORS
-        egui::Frame::none()
-            .fill(CARD_BG)
-            .stroke(Stroke::new(1.0, LINE_BORDER))
-            .rounding(Rounding::same(8.0))
-            .inner_margin(14.0)
-            .show(ui, |ui| {
-                ui.label(egui::RichText::new("AUTOMATION & SENSORS").font(FontId::new(10.5, FontFamily::Proportional)).color(TEXT_DIM));
-                ui.add_space(4.0);
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                let intervals = [(500u16, "0.5s"), (1000u16, "1.0s"), (2000u16, "2.0s"), (3000u16, "3.0s")];
+                                for (val, label) in intervals {
+                                    let selected = self.status.config.probe_interval_ms == val;
+                                    let btn = ui.selectable_label(selected, label);
+                                    if btn.clicked() {
+                                        self.status.config.probe_interval_ms = val;
+                                        let data = val.to_le_bytes();
+                                        Self::send_ipc(CMD_SET_PROBE_INTERVAL, &data);
+                                    }
+                                }
+                            });
+                        });
 
-                // Autostart
-                ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        ui.label(egui::RichText::new("Start at Login (LightOmen Tray)").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
-                        ui.label(egui::RichText::new("Launch lightomen-tray automatically on user login.").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
-                    });
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.add_space(8.0);
 
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let mut auto = self.status.config.autostart == 1;
-                        if ui.checkbox(&mut auto, "").changed() {
-                            self.status.config.autostart = if auto { 1 } else { 0 };
-                            Self::toggle_autostart(auto);
-                            Self::send_ipc(CMD_SET_AUTOSTART, &[self.status.config.autostart]);
-                        }
-                    });
-                });
+                        // Zero-RPM GPU Fan on Battery
+                        ui.horizontal(|ui| {
+                            ui.vertical(|ui| {
+                                ui.label(egui::RichText::new("Zero-RPM GPU Fan on Battery").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
+                                ui.label(egui::RichText::new("Stop GPU fan (0 RPM) when running on battery and NVIDIA is in D3cold sleep. Ramps up if CPU reaches 75°C.").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
+                            });
 
-                ui.add_space(8.0);
-                ui.separator();
-                ui.add_space(8.0);
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                let mut zero_rpm = self.status.config.gpu_zero_rpm == 1;
+                                if ui.checkbox(&mut zero_rpm, "").changed() {
+                                    self.status.config.gpu_zero_rpm = if zero_rpm { 1 } else { 0 };
+                                    Self::send_ipc(CMD_SET_GPU_ZERO_RPM, &[self.status.config.gpu_zero_rpm]);
+                                }
+                            });
+                        });
 
-                // Probe interval
-                ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        ui.label(egui::RichText::new("Hardware Probe Interval").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
-                        ui.label(egui::RichText::new("Sensor refresh rate (0.5s to 3.0s).").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
-                    });
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.add_space(8.0);
 
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let intervals = [(500u16, "0.5s"), (1000u16, "1.0s"), (2000u16, "2.0s"), (3000u16, "3.0s")];
-                        for (val, label) in intervals {
-                            let selected = self.status.config.probe_interval_ms == val;
-                            let btn = ui.selectable_label(selected, label);
-                            if btn.clicked() {
-                                self.status.config.probe_interval_ms = val;
-                                let data = val.to_le_bytes();
-                                Self::send_ipc(CMD_SET_PROBE_INTERVAL, &data);
-                            }
-                        }
-                    });
-                });
+                        // Auto Eco on Battery
+                        ui.horizontal(|ui| {
+                            ui.vertical(|ui| {
+                                ui.label(egui::RichText::new("Auto Eco Mode on Battery").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
+                                ui.label(egui::RichText::new("Automatically switch to Eco profile when unplugged, and restore previous profile on AC.").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
+                            });
 
-                ui.add_space(8.0);
-                ui.separator();
-                ui.add_space(8.0);
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                let mut eco = self.status.config.eco_on_battery() == 1;
+                                if ui.checkbox(&mut eco, "").changed() {
+                                    self.status.config.set_eco_on_battery(if eco { 1 } else { 0 });
+                                    Self::send_ipc(CMD_SET_ECO_ON_BATTERY, &[if eco { 1 } else { 0 }]);
+                                }
+                            });
+                        });
 
-                // Zero-RPM GPU Fan on Battery
-                ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        ui.label(egui::RichText::new("Zero-RPM GPU Fan on Battery").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
-                        ui.label(egui::RichText::new("Stop GPU fan (0 RPM) when running on battery and NVIDIA is in D3cold sleep. Ramps up if CPU reaches 75°C.").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
-                    });
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.add_space(8.0);
 
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let mut zero_rpm = self.status.config.gpu_zero_rpm == 1;
-                        if ui.checkbox(&mut zero_rpm, "").changed() {
-                            self.status.config.gpu_zero_rpm = if zero_rpm { 1 } else { 0 };
-                            Self::send_ipc(CMD_SET_GPU_ZERO_RPM, &[self.status.config.gpu_zero_rpm]);
-                        }
-                    });
-                });
+                        // Lowest Refresh Rate on Battery (60 Hz)
+                        ui.horizontal(|ui| {
+                            ui.vertical(|ui| {
+                                ui.label(egui::RichText::new("Lowest Refresh Rate on Battery (60 Hz)").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
+                                ui.label(egui::RichText::new("Automatically switch screen to 60 Hz on battery, restore maximum refresh rate (144 Hz) on AC.").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
+                            });
 
-                ui.add_space(8.0);
-                ui.separator();
-                ui.add_space(8.0);
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                let mut low_hz = self.status.config.low_hz_on_battery() == 1;
+                                if ui.checkbox(&mut low_hz, "").changed() {
+                                    self.status.config.set_low_hz_on_battery(if low_hz { 1 } else { 0 });
+                                    Self::send_ipc(CMD_SET_LOW_HZ_ON_BATTERY, &[if low_hz { 1 } else { 0 }]);
+                                    let is_bat = self.status.on_battery == 1;
+                                    let target_hz = if low_hz && is_bat { 60 } else { 144 };
+                                    let _ = Command::new("kscreen-doctor")
+                                        .arg(format!("output.1.mode.1920x1080@{}", target_hz))
+                                        .spawn();
+                                }
+                            });
+                        });
 
-                // Auto Eco on Battery
-                ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        ui.label(egui::RichText::new("Auto Eco Mode on Battery").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
-                        ui.label(egui::RichText::new("Automatically switch to Eco profile when unplugged, and restore previous profile on AC.").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
-                    });
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.add_space(8.0);
 
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let mut eco = self.status.config.eco_on_battery() == 1;
-                        if ui.checkbox(&mut eco, "").changed() {
-                            self.status.config.set_eco_on_battery(if eco { 1 } else { 0 });
-                            Self::send_ipc(CMD_SET_ECO_ON_BATTERY, &[if eco { 1 } else { 0 }]);
-                        }
-                    });
-                });
+                        // 1. Disable CPU Turbo Boost (AC & Battery)
+                        let disable_boost_global = !self.status.config.cpu_boost_enabled();
+                        ui.horizontal(|ui| {
+                            ui.vertical(|ui| {
+                                ui.label(egui::RichText::new("Disable CPU Turbo Boost").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
+                                ui.label(egui::RichText::new("Disable dynamic boost to 5.0 GHz across AC & Battery. Limits CPU clock to base frequency (~4.3 GHz), eliminating aggressive voltage spikes and dropping thermals by 10-15°C (Windows 95% processor state).").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
+                            });
 
-                ui.add_space(8.0);
-                ui.separator();
-                ui.add_space(8.0);
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                let mut disable_val = disable_boost_global;
+                                if ui.checkbox(&mut disable_val, "").changed() {
+                                    let enable_boost = !disable_val;
+                                    self.status.config.set_cpu_boost_enabled(enable_boost);
+                                    Self::send_ipc(CMD_SET_CPU_BOOST, &[if enable_boost { 1 } else { 0 }]);
+                                }
+                            });
+                        });
 
-                // Lowest Refresh Rate on Battery (60 Hz)
-                ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        ui.label(egui::RichText::new("Lowest Refresh Rate on Battery (60 Hz)").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
-                        ui.label(egui::RichText::new("Automatically switch screen to 60 Hz on battery, restore maximum refresh rate (144 Hz) on AC.").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
-                    });
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.add_space(8.0);
 
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let mut low_hz = self.status.config.low_hz_on_battery() == 1;
-                        if ui.checkbox(&mut low_hz, "").changed() {
-                            self.status.config.set_low_hz_on_battery(if low_hz { 1 } else { 0 });
-                            Self::send_ipc(CMD_SET_LOW_HZ_ON_BATTERY, &[if low_hz { 1 } else { 0 }]);
-                            let is_bat = self.status.on_battery == 1;
-                            let target_hz = if low_hz && is_bat { 60 } else { 144 };
-                            let _ = Command::new("kscreen-doctor")
-                                .arg(format!("output.1.mode.1920x1080@{}", target_hz))
-                                .spawn();
-                        }
-                    });
-                });
+                        // 2. Disable Turbo Boost on Battery (Battery Only)
+                        ui.horizontal(|ui| {
+                            ui.vertical(|ui| {
+                                let title_color = if !disable_boost_global { TEXT_PRIMARY } else { TEXT_DIM };
+                                let sub_color = if !disable_boost_global { TEXT_MUTED } else { TEXT_DIM };
+                                ui.label(egui::RichText::new("Disable Turbo Boost on Battery").font(FontId::new(13.0, FontFamily::Proportional)).color(title_color));
+                                let desc = if !disable_boost_global {
+                                    "Automatically disable CPU Turbo Boost when running on battery to prevent power spikes and maximize battery life."
+                                } else {
+                                    "Inactive: CPU Turbo Boost is already turned off globally across both AC and battery."
+                                };
+                                ui.label(egui::RichText::new(desc).font(FontId::new(11.0, FontFamily::Proportional)).color(sub_color));
+                            });
 
-                ui.add_space(8.0);
-                ui.separator();
-                ui.add_space(8.0);
-
-                // CPU Turbo Boost (Precision Boost)
-                let master_boost = self.status.config.cpu_boost_enabled();
-                ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        ui.label(egui::RichText::new("CPU Turbo Boost (Precision Boost)").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
-                        ui.label(egui::RichText::new("Enable dynamic clock boost up to 5.0 GHz. Disabling limits clock to base frequency (~4.3 GHz), drastically reducing thermals and fan noise (equivalent to Windows 95% max processor state).").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
-                    });
-
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let mut boost = master_boost;
-                        if ui.checkbox(&mut boost, "").changed() {
-                            self.status.config.set_cpu_boost_enabled(boost);
-                            Self::send_ipc(CMD_SET_CPU_BOOST, &[if boost { 1 } else { 0 }]);
-                        }
-                    });
-                });
-
-                ui.add_space(8.0);
-                ui.separator();
-                ui.add_space(8.0);
-
-                // Disable Turbo Boost on Battery
-                ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        let title_color = if master_boost { TEXT_PRIMARY } else { TEXT_DIM };
-                        let sub_color = if master_boost { TEXT_MUTED } else { TEXT_DIM };
-                        ui.label(egui::RichText::new("Disable Turbo Boost on Battery").font(FontId::new(13.0, FontFamily::Proportional)).color(title_color));
-                        let desc = if master_boost {
-                            "Automatically disable CPU Turbo Boost when running on battery to prevent power spikes and maximize battery life."
-                        } else {
-                            "Disabled: Turbo Boost is already turned off globally across both AC and battery."
-                        };
-                        ui.label(egui::RichText::new(desc).font(FontId::new(11.0, FontFamily::Proportional)).color(sub_color));
-                    });
-
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.add_enabled_ui(master_boost, |ui| {
-                            let mut no_boost_bat = self.status.config.no_boost_on_battery();
-                            if ui.checkbox(&mut no_boost_bat, "").changed() {
-                                self.status.config.set_no_boost_on_battery(no_boost_bat);
-                                Self::send_ipc(CMD_SET_NO_BOOST_ON_BATTERY, &[if no_boost_bat { 1 } else { 0 }]);
-                            }
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.add_enabled_ui(!disable_boost_global, |ui| {
+                                    let mut no_boost_bat = self.status.config.no_boost_on_battery();
+                                    if ui.checkbox(&mut no_boost_bat, "").changed() {
+                                        self.status.config.set_no_boost_on_battery(no_boost_bat);
+                                        Self::send_ipc(CMD_SET_NO_BOOST_ON_BATTERY, &[if no_boost_bat { 1 } else { 0 }]);
+                                    }
+                                });
+                            });
                         });
                     });
-                });
-            });
 
-        ui.add_space(8.0);
+                ui.add_space(8.0);
 
-        // 3. FACTORY RESET
-        egui::Frame::none()
-            .fill(CARD_BG)
-            .stroke(Stroke::new(1.0, LINE_BORDER))
-            .rounding(Rounding::same(8.0))
-            .inner_margin(14.0)
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Reset Fan Curves & Settings").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
+                // 3. FACTORY RESET
+                egui::Frame::none()
+                    .fill(CARD_BG)
+                    .stroke(Stroke::new(1.0, LINE_BORDER))
+                    .rounding(Rounding::same(8.0))
+                    .inner_margin(14.0)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("Reset Fan Curves & Settings").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
 
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Reset Defaults").clicked() {
-                            self.status.config.cpu_curve = DEFAULT_CPU_CURVE;
-                            self.status.config.gpu_curve = DEFAULT_GPU_CURVE;
-                            self.status.config.probe_interval_ms = 2000;
-                            self.status.config.gpu_zero_rpm = 1;
-                            self.status.config.set_eco_on_battery(1);
-                            self.status.config.set_low_hz_on_battery(1);
-                            self.status.config.set_cpu_boost_enabled(true);
-                            self.status.config.set_no_boost_on_battery(true);
-                            self.status.config.hotkey_code = 149;
-                            let mut data = [0u8; 14];
-                            data[0..7].copy_from_slice(&DEFAULT_CPU_CURVE);
-                            data[7..14].copy_from_slice(&DEFAULT_GPU_CURVE);
-                            Self::send_ipc(CMD_SET_FAN_CURVES, &data);
-                            Self::send_ipc(CMD_SET_PROBE_INTERVAL, &2000u16.to_le_bytes());
-                            Self::send_ipc(CMD_SET_GPU_ZERO_RPM, &[1]);
-                            Self::send_ipc(CMD_SET_ECO_ON_BATTERY, &[1]);
-                            Self::send_ipc(CMD_SET_LOW_HZ_ON_BATTERY, &[1]);
-                            Self::send_ipc(CMD_SET_CPU_BOOST, &[1]);
-                            Self::send_ipc(CMD_SET_NO_BOOST_ON_BATTERY, &[1]);
-                        }
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.button("Reset Defaults").clicked() {
+                                    self.status.config.cpu_curve = DEFAULT_CPU_CURVE;
+                                    self.status.config.gpu_curve = DEFAULT_GPU_CURVE;
+                                    self.status.config.probe_interval_ms = 2000;
+                                    self.status.config.gpu_zero_rpm = 1;
+                                    self.status.config.set_eco_on_battery(1);
+                                    self.status.config.set_low_hz_on_battery(1);
+                                    self.status.config.set_cpu_boost_enabled(true);
+                                    self.status.config.set_no_boost_on_battery(true);
+                                    self.status.config.hotkey_code = 149;
+                                    let mut data = [0u8; 14];
+                                    data[0..7].copy_from_slice(&DEFAULT_CPU_CURVE);
+                                    data[7..14].copy_from_slice(&DEFAULT_GPU_CURVE);
+                                    Self::send_ipc(CMD_SET_FAN_CURVES, &data);
+                                    Self::send_ipc(CMD_SET_PROBE_INTERVAL, &2000u16.to_le_bytes());
+                                    Self::send_ipc(CMD_SET_GPU_ZERO_RPM, &[1]);
+                                    Self::send_ipc(CMD_SET_ECO_ON_BATTERY, &[1]);
+                                    Self::send_ipc(CMD_SET_LOW_HZ_ON_BATTERY, &[1]);
+                                    Self::send_ipc(CMD_SET_CPU_BOOST, &[1]);
+                                    Self::send_ipc(CMD_SET_NO_BOOST_ON_BATTERY, &[1]);
+                                }
+                            });
+                        });
                     });
-                });
             });
     }
 }
