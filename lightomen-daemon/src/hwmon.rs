@@ -8,7 +8,6 @@ use std::time::Instant;
 
 pub struct HwmonBackend {
     cpu_temp_file: Option<File>,
-    gpu_temp_file: Option<File>,
     fan1_input_file: Option<File>,
     fan2_input_file: Option<File>,
     fan1_target_path: Option<PathBuf>,
@@ -36,7 +35,6 @@ impl HwmonBackend {
         let paths = Self::discover_hwmon_paths();
 
         let cpu_temp_file = paths.cpu_temp.and_then(|p| File::open(p).ok());
-        let gpu_temp_file = paths.gpu_temp.and_then(|p| File::open(p).ok());
         let fan1_input_file = paths.fan1_input.and_then(|p| File::open(p).ok());
         let fan2_input_file = paths.fan2_input.and_then(|p| File::open(p).ok());
 
@@ -108,7 +106,6 @@ impl HwmonBackend {
 
         Self {
             cpu_temp_file,
-            gpu_temp_file,
             fan1_input_file,
             fan2_input_file,
             fan1_target_path,
@@ -197,11 +194,6 @@ impl HwmonBackend {
                         if pwm_duty.exists() {
                             res.fan_pwm_duty = Some(pwm_duty);
                         }
-                    } else if name == "amdgpu" || name == "nouveau" || name.contains("nv") {
-                        let t = p.join("temp1_input");
-                        if t.exists() {
-                            res.gpu_temp = Some(t);
-                        }
                     }
                 }
             }
@@ -244,15 +236,31 @@ impl HwmonBackend {
         })
     }
 
-    pub fn read_gpu_temp(&mut self) -> Option<u16> {
-        Self::read_fd_number(&mut self.gpu_temp_file).map(|milli| {
-            let c = (milli / 1000) as u16;
-            if c > 0 && c < 125 {
-                c
-            } else {
-                0
+    /// Check if NVIDIA dGPU is currently in D3cold (suspended) power-saving sleep.
+    /// Safely inspects Linux kernel runtime PM in memory without waking the PCIe bus.
+    pub fn is_gpu_suspended(&mut self) -> bool {
+        if let Some(ref mut f) = self.gpu_pci_status_file {
+            if f.seek(SeekFrom::Start(0)).is_ok() {
+                let mut buf = [0u8; 32];
+                if let Ok(n) = f.read(&mut buf) {
+                    let s = std::str::from_utf8(&buf[..n]).unwrap_or("");
+                    return s.trim() == "suspended";
+                }
             }
-        })
+        } else {
+            // Lazy fallback open if not open at initialization
+            let p = PathBuf::from("/sys/bus/pci/devices/0000:01:00.0/power/runtime_status");
+            if let Ok(mut f) = File::open(&p) {
+                let mut buf = [0u8; 32];
+                if let Ok(n) = f.read(&mut buf) {
+                    let s = std::str::from_utf8(&buf[..n]).unwrap_or("");
+                    let is_susp = s.trim() == "suspended";
+                    self.gpu_pci_status_file = Some(f);
+                    return is_susp;
+                }
+            }
+        }
+        false
     }
 
     /// Read dynamic fan RPM directly from hp-wmi hwmon (fan1_input, fan2_input)
@@ -345,9 +353,9 @@ impl HwmonBackend {
         }
     }
 
-    /// Reads live CPU wattage from RAPL energy_uj and checks GPU D3cold sleep state
-    pub fn read_power_metrics(&mut self, power_profile: u8) -> (u32, u32) {
-        let cpu_mw = if let Some(ref mut f) = self.rapl_energy_file {
+    /// Reads live CPU wattage from RAPL energy_uj (AMD/Intel energy driver)
+    pub fn read_cpu_power_mw(&mut self, power_profile: u8) -> u32 {
+        if let Some(ref mut f) = self.rapl_energy_file {
             if f.seek(SeekFrom::Start(0)).is_ok() {
                 let mut buf = [0u8; 32];
                 if let Ok(n) = f.read(&mut buf) {
@@ -359,69 +367,27 @@ impl HwmonBackend {
                                 let watts_f = (delta_uj as f64) / (elapsed as f64 * 1000.0);
                                 self.last_energy_uj = cur_uj;
                                 self.last_energy_time = Instant::now();
-                                (watts_f * 1000.0).clamp(1000.0, 150000.0) as u32
-                            } else {
-                                if self.last_energy_uj == 0 {
-                                    self.last_energy_uj = cur_uj;
-                                    self.last_energy_time = Instant::now();
-                                }
-                                match power_profile {
-                                    0 => 12000,
-                                    1 => 25000,
-                                    _ => 45000,
-                                }
+                                return (watts_f * 1000.0).clamp(1000.0, 150000.0) as u32;
+                            } else if self.last_energy_uj == 0 || cur_uj < self.last_energy_uj {
+                                self.last_energy_uj = cur_uj;
+                                self.last_energy_time = Instant::now();
                             }
-                        } else {
-                            match power_profile { 0 => 12000, 1 => 25000, _ => 45000 }
                         }
-                    } else {
-                        match power_profile { 0 => 12000, 1 => 25000, _ => 45000 }
                     }
-                } else {
-                    match power_profile { 0 => 12000, 1 => 25000, _ => 45000 }
                 }
-            } else {
-                match power_profile { 0 => 12000, 1 => 25000, _ => 45000 }
             }
-        } else {
-            match power_profile { 0 => 12000, 1 => 25000, _ => 45000 }
-        };
-
-        // GPU Power: If dGPU is in D3cold (suspended), report 0 mW!
-        let is_suspended = if let Some(ref mut f) = self.gpu_pci_status_file {
-            if f.seek(SeekFrom::Start(0)).is_ok() {
-                let mut buf = [0u8; 32];
-                if let Ok(n) = f.read(&mut buf) {
-                    let s = std::str::from_utf8(&buf[..n]).unwrap_or("");
-                    s.trim() == "suspended"
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        } else {
-            false
-        };
-
-        let gpu_mw = if is_suspended {
-            0
-        } else {
-            match power_profile {
-                0 => 10000,
-                1 => 35000,
-                _ => 75000,
-            }
-        };
-
-        (cpu_mw, gpu_mw)
+        }
+        match power_profile {
+            0 => 12000,
+            1 => 25000,
+            _ => 45000,
+        }
     }
 }
 
 #[derive(Default)]
 struct DiscoveredPaths {
     cpu_temp: Option<PathBuf>,
-    gpu_temp: Option<PathBuf>,
     fan1_input: Option<PathBuf>,
     fan2_input: Option<PathBuf>,
     fan1_target: Option<PathBuf>,

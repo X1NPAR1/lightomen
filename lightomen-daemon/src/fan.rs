@@ -75,7 +75,11 @@ impl FanController {
             }
             FAN_MODE_CURVE => {
                 let cpu_pct = Self::evaluate_curve(cpu_curve, cpu_temp);
-                let gpu_pct = Self::evaluate_curve(gpu_curve, gpu_temp);
+                let gpu_pct = if gpu_temp == 0 {
+                    0
+                } else {
+                    Self::evaluate_curve(gpu_curve, gpu_temp)
+                };
 
                 let target1 = Self::pct_to_rpm(cpu_pct, max_rpm);
                 let target2 = Self::pct_to_rpm(gpu_pct, max_rpm);

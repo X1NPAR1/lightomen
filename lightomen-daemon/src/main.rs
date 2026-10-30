@@ -113,12 +113,21 @@ fn main() {
         };
         prev_cpu_temp = cpu_temp;
 
-        // Telemetry: GPU Temp (EC 0xB7 primary to solve D3cold/cooldown 0°C bug, Hwmon fallback)
-        let gpu_temp = ec
-            .read_gpu_temp()
-            .or_else(|| hwmon.read_gpu_temp())
-            .unwrap_or(prev_gpu_temp)
-            .max(25);
+        // Telemetry: GPU Temp & Power (Passive/D3cold Safe)
+        // If NVIDIA dGPU is suspended in D3cold: DO NOT touch EC or sysfs for GPU!
+        // Guarantees dGPU is never woke up unnecessarily by LightOmen.
+        let is_gpu_suspended = hwmon.is_gpu_suspended();
+        let (gpu_temp, gpu_power_mw) = if is_gpu_suspended {
+            (0u16, 0u32)
+        } else {
+            let t = ec.read_gpu_temp().unwrap_or(prev_gpu_temp).max(25);
+            let pwr = match current_cfg.power_profile {
+                0 => 10000,
+                1 => 35000,
+                _ => 75000,
+            };
+            (t, pwr)
+        };
         prev_gpu_temp = gpu_temp;
 
         // Telemetry: Fan RPMs (Hwmon fan1_input/fan2_input primary, EC fallback)
@@ -131,8 +140,8 @@ fn main() {
         let fan2_rpm = hw_f2.or(ec_f2).unwrap_or(prev_fan2_rpm);
         prev_fan2_rpm = fan2_rpm;
 
-        // Telemetry: Live CPU Power (RAPL) & GPU D3cold sleep state
-        let (cpu_power_mw, gpu_power_mw) = hwmon.read_power_metrics(current_cfg.power_profile);
+        // Telemetry: Live CPU Power via RAPL energy_uj
+        let cpu_power_mw = hwmon.read_cpu_power_mw(current_cfg.power_profile);
 
         // Apply fan curve / mode (with keep-alive & >=90°C emergency max)
         FanController::apply(

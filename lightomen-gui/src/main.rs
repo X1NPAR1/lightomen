@@ -293,7 +293,7 @@ impl LightOmenApp {
 
             if enable {
                 let _ = fs::create_dir_all(&autostart_dir);
-                let content = "[Desktop Entry]\nType=Application\nName=LightOmen Tray\nExec=/usr/local/bin/lightomen-tray\nHidden=false\nNoDisplay=false\nX-GNOME-Autostart-enabled=true\n";
+                let content = "[Desktop Entry]\nType=Application\nName=LightOmen Tray\nExec=env DRI_PRIME=0 __NV_PRIME_RENDER_OFFLOAD=0 /usr/local/bin/lightomen-tray\nHidden=false\nNoDisplay=false\nX-GNOME-Autostart-enabled=true\n";
                 let _ = fs::write(desktop_path, content);
             } else {
                 let _ = fs::remove_file(desktop_path);
@@ -517,10 +517,12 @@ impl LightOmenApp {
         });
     }
 
-    /// Tab 0: Dashboard (Temps, RPM, Power Profiles, Fan Auto/Max/Curve)
+    /// Tab 0: Dashboard (Temps, RPM, Power Profiles, Fan Auto/Max/Curve, Real-time Power Card)
     fn render_dashboard(&mut self, ui: &mut Ui, accent: Color32) {
+        let is_gpu_asleep = self.status.telemetry.gpu_temp == 0 || self.status.telemetry.gpu_power_mw == 0;
+
         ui.columns(2, |cols| {
-            // CPU Telemetry Card
+            // CPU Telemetry Card (Clean without watt clutter)
             egui::Frame::none()
                 .fill(CARD_BG)
                 .stroke(Stroke::new(1.0, LINE_BORDER))
@@ -539,9 +541,8 @@ impl LightOmenApp {
                         ui.label(egui::RichText::new("°C").font(FontId::new(18.0, FontFamily::Proportional)).color(TEXT_MUTED));
                     });
                     ui.add_space(4.0);
-                    let power_w = (self.status.telemetry.cpu_power_mw as f32 / 1000.0).round() as u32;
                     ui.label(
-                        egui::RichText::new(format!("~{} W · Ryzen 7640HS", power_w))
+                        egui::RichText::new("AMD Ryzen 5 7640HS")
                             .font(FontId::new(11.0, FontFamily::Proportional))
                             .color(TEXT_DIM),
                     );
@@ -551,7 +552,7 @@ impl LightOmenApp {
                     ui.label(egui::RichText::new(fan_label).font(FontId::new(11.5, FontFamily::Monospace)).color(accent));
                 });
 
-            // GPU Telemetry Card
+            // GPU Telemetry Card (Zero wake-up, D3cold asleep indicator)
             egui::Frame::none()
                 .fill(CARD_BG)
                 .stroke(Stroke::new(1.0, LINE_BORDER))
@@ -560,27 +561,39 @@ impl LightOmenApp {
                 .show(&mut cols[1], |ui| {
                     ui.label(egui::RichText::new("GPU").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
                     ui.add_space(2.0);
-                    ui.horizontal(|ui| {
+                    if is_gpu_asleep {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("Sleep")
+                                    .font(FontId::new(32.0, FontFamily::Proportional))
+                                    .color(COLOR_OK)
+                                    .strong(),
+                            );
+                            ui.label(egui::RichText::new("D3cold").font(FontId::new(11.0, FontFamily::Monospace)).color(COLOR_OK));
+                        });
+                        ui.add_space(8.0);
                         ui.label(
-                            egui::RichText::new(format!("{}", self.status.telemetry.gpu_temp))
-                                .font(FontId::new(36.0, FontFamily::Proportional))
-                                .color(TEXT_HI)
-                                .strong(),
+                            egui::RichText::new("NVIDIA RTX 4050 · Standby")
+                                .font(FontId::new(11.0, FontFamily::Proportional))
+                                .color(TEXT_DIM),
                         );
-                        ui.label(egui::RichText::new("°C").font(FontId::new(18.0, FontFamily::Proportional)).color(TEXT_MUTED));
-                    });
-                    ui.add_space(4.0);
-                    let power_w = (self.status.telemetry.gpu_power_mw as f32 / 1000.0).round() as u32;
-                    let gpu_power_label = if power_w == 0 {
-                        "Sleep (0 W) · RTX 4050".to_string()
                     } else {
-                        format!("Active (~{} W) · RTX 4050", power_w)
-                    };
-                    ui.label(
-                        egui::RichText::new(gpu_power_label)
-                            .font(FontId::new(11.0, FontFamily::Proportional))
-                            .color(if power_w == 0 { TEXT_MUTED } else { TEXT_DIM }),
-                    );
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(format!("{}", self.status.telemetry.gpu_temp))
+                                    .font(FontId::new(36.0, FontFamily::Proportional))
+                                    .color(TEXT_HI)
+                                    .strong(),
+                            );
+                            ui.label(egui::RichText::new("°C").font(FontId::new(18.0, FontFamily::Proportional)).color(TEXT_MUTED));
+                        });
+                        ui.add_space(4.0);
+                        ui.label(
+                            egui::RichText::new("NVIDIA RTX 4050 · Active")
+                                .font(FontId::new(11.0, FontFamily::Proportional))
+                                .color(TEXT_DIM),
+                        );
+                    }
                     ui.add_space(6.0);
                     let f2 = self.status.telemetry.fan2_rpm;
                     let fan_label = if f2 > 0 { format!("GPU fan: {} rpm", f2) } else { "GPU fan: 0 rpm (Quiet)".to_string() };
@@ -707,7 +720,96 @@ impl LightOmenApp {
             }
         });
 
-        ui.add_space(16.0);
+        ui.add_space(10.0);
+
+        // Real-time Power Consumption Card (RAPL Live CPU & D3cold dGPU Zero-Watt)
+        let cpu_watts = self.status.telemetry.cpu_power_mw as f32 / 1000.0;
+        let gpu_watts = self.status.telemetry.gpu_power_mw as f32 / 1000.0;
+        let total_watts = cpu_watts + gpu_watts;
+
+        egui::Frame::none()
+            .fill(CARD_BG)
+            .stroke(Stroke::new(1.0, LINE_BORDER))
+            .rounding(Rounding::same(8.0))
+            .inner_margin(12.0)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("⚡ REAL-TIME POWER DRAIN")
+                            .font(FontId::new(10.5, FontFamily::Proportional))
+                            .color(TEXT_MUTED),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            egui::RichText::new(format!("{:.1} W Combined", total_watts))
+                                .font(FontId::new(11.5, FontFamily::Monospace))
+                                .color(accent)
+                                .strong(),
+                        );
+                    });
+                });
+
+                ui.add_space(8.0);
+
+                ui.columns(2, |cols| {
+                    // CPU Package (RAPL)
+                    egui::Frame::none()
+                        .fill(PILL_BG)
+                        .stroke(Stroke::new(1.0, LINE_BORDER))
+                        .rounding(Rounding::same(6.0))
+                        .inner_margin(Vec2::new(10.0, 8.0))
+                        .show(&mut cols[0], |ui| {
+                            ui.label(egui::RichText::new("CPU Package (RAPL)").font(FontId::new(10.0, FontFamily::Proportional)).color(TEXT_MUTED));
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(format!("{:.1}", cpu_watts))
+                                        .font(FontId::new(17.0, FontFamily::Monospace))
+                                        .color(TEXT_HI)
+                                        .strong(),
+                                );
+                                ui.label(egui::RichText::new("W").font(FontId::new(11.0, FontFamily::Monospace)).color(TEXT_DIM));
+                            });
+                            ui.label(egui::RichText::new("Hardware powercap (No wake)").font(FontId::new(9.5, FontFamily::Proportional)).color(TEXT_DIM));
+                        });
+
+                    // NVIDIA dGPU (PCIe D3cold)
+                    egui::Frame::none()
+                        .fill(PILL_BG)
+                        .stroke(Stroke::new(1.0, LINE_BORDER))
+                        .rounding(Rounding::same(6.0))
+                        .inner_margin(Vec2::new(10.0, 8.0))
+                        .show(&mut cols[1], |ui| {
+                            ui.label(egui::RichText::new("NVIDIA dGPU").font(FontId::new(10.0, FontFamily::Proportional)).color(TEXT_MUTED));
+                            if is_gpu_asleep {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        egui::RichText::new("0.0")
+                                            .font(FontId::new(17.0, FontFamily::Monospace))
+                                            .color(COLOR_OK)
+                                            .strong(),
+                                    );
+                                    ui.label(egui::RichText::new("W").font(FontId::new(11.0, FontFamily::Monospace)).color(COLOR_OK));
+                                    ui.label(egui::RichText::new("· D3cold").font(FontId::new(10.5, FontFamily::Monospace)).color(COLOR_OK));
+                                });
+                                ui.label(egui::RichText::new("Deep sleep / Zero watt (0 W)").font(FontId::new(9.5, FontFamily::Proportional)).color(COLOR_OK));
+                            } else {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        egui::RichText::new(format!("~{:.0}", gpu_watts))
+                                            .font(FontId::new(17.0, FontFamily::Monospace))
+                                            .color(TEXT_HI)
+                                            .strong(),
+                                    );
+                                    ui.label(egui::RichText::new("W").font(FontId::new(11.0, FontFamily::Monospace)).color(TEXT_DIM));
+                                    ui.label(egui::RichText::new("· Active").font(FontId::new(10.5, FontFamily::Monospace)).color(COLOR_PERF));
+                                });
+                                ui.label(egui::RichText::new("Active power draw").font(FontId::new(9.5, FontFamily::Proportional)).color(TEXT_DIM));
+                            }
+                        });
+                });
+            });
+
+        ui.add_space(14.0);
 
         // Footer status
         ui.horizontal(|ui| {
@@ -1376,6 +1478,11 @@ pub fn fan_speed_at(curve: &[u8; 7], temp: u16) -> u8 {
 }
 
 fn main() -> eframe::Result<()> {
+    // Force Mesa/integrated AMD graphics: never probe or wake NVIDIA dGPU
+    std::env::set_var("DRI_PRIME", "0");
+    std::env::set_var("__NV_PRIME_RENDER_OFFLOAD", "0");
+    std::env::set_var("__GLX_VENDOR_LIBRARY_NAME", "mesa");
+
     let icon = egui::IconData {
         rgba: icon_data::ICON_32_RGBA.to_vec(),
         width: 32,

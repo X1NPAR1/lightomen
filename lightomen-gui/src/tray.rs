@@ -77,16 +77,26 @@ impl Tray for LightOmenTray {
     }
 
     fn title(&self) -> String {
-        format!("LightOmen: CPU {}°C | GPU {}°C", self.cpu_temp, self.gpu_temp)
+        if self.gpu_temp == 0 {
+            format!("LightOmen: CPU {}°C | GPU Sleep (0 W)", self.cpu_temp)
+        } else {
+            format!("LightOmen: CPU {}°C | GPU {}°C", self.cpu_temp, self.gpu_temp)
+        }
     }
 
     fn tool_tip(&self) -> ToolTip {
+        let gpu_str = if self.gpu_temp == 0 {
+            "Sleep (D3cold · 0 W)".to_string()
+        } else {
+            format!("{}°C", self.gpu_temp)
+        };
+
         ToolTip {
             title: "LightOmen Linux".into(),
             description: format!(
-                "CPU: {}°C | GPU: {}°C\nProfile: {}\nFan Mode: {}",
+                "CPU: {}°C | GPU: {}\nProfile: {}\nFan Mode: {}",
                 self.cpu_temp,
-                self.gpu_temp,
+                gpu_str,
                 match self.power_profile {
                     0 => "Eco",
                     1 => "Balanced",
@@ -217,6 +227,11 @@ impl Tray for LightOmenTray {
 }
 
 fn main() {
+    // Force Mesa/integrated AMD graphics: never probe or wake NVIDIA dGPU
+    std::env::set_var("DRI_PRIME", "0");
+    std::env::set_var("__NV_PRIME_RENDER_OFFLOAD", "0");
+    std::env::set_var("__GLX_VENDOR_LIBRARY_NAME", "mesa");
+
     let tray = LightOmenTray::new();
     let service = TrayService::new(tray);
     let handle = service.handle();

@@ -292,6 +292,9 @@ impl HotkeyMonitor {
         cmd.env("DBUS_SESSION_BUS_ADDRESS", &dbus_addr);
         cmd.env("WAYLAND_DISPLAY", &wayland_disp);
         cmd.env("DISPLAY", ":0");
+        cmd.env("DRI_PRIME", "0");
+        cmd.env("__NV_PRIME_RENDER_OFFLOAD", "0");
+        cmd.env("__GLX_VENDOR_LIBRARY_NAME", "mesa");
 
         if cmd.spawn().is_err() {
             // Fallback: spawn binary directly under target user credentials
@@ -302,6 +305,9 @@ impl HotkeyMonitor {
             direct.env("DBUS_SESSION_BUS_ADDRESS", &dbus_addr);
             direct.env("WAYLAND_DISPLAY", &wayland_disp);
             direct.env("DISPLAY", ":0");
+            direct.env("DRI_PRIME", "0");
+            direct.env("__NV_PRIME_RENDER_OFFLOAD", "0");
+            direct.env("__GLX_VENDOR_LIBRARY_NAME", "mesa");
             let _ = direct.spawn();
         }
     }

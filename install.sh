@@ -135,7 +135,7 @@ cat << 'EOF' > /usr/share/applications/lightomen.desktop
 Name=LightOmen
 GenericName=HP Omen & Victus Controller
 Comment=Hardware Performance, Fan Curve & MUX Switch Controller
-Exec=/usr/local/bin/lightomen-gui
+Exec=env DRI_PRIME=0 __NV_PRIME_RENDER_OFFLOAD=0 /usr/local/bin/lightomen-gui
 Icon=lightomen
 Terminal=false
 Type=Application
@@ -153,12 +153,13 @@ if [ -n "$USER_HOME" ]; then
 Type=Application
 Name=LightOmen Tray
 Comment=LightOmen Hardware Tray Controller
-Exec=/usr/local/bin/lightomen-tray
+Exec=env DRI_PRIME=0 __NV_PRIME_RENDER_OFFLOAD=0 /usr/local/bin/lightomen-tray
 Hidden=false
 NoDisplay=false
 X-GNOME-Autostart-enabled=true
 EOF
-    ln -sf "$USER_HOME/.config/autostart/lightomen-tray.desktop" "$USER_HOME/.config/autostart/ohman-gui.desktop" 2>/dev/null || true
+    rm -f "$USER_HOME/.config/autostart/ohman-gui.desktop" 2>/dev/null || true
+    rm -f "$USER_HOME/.config/autostart/lightomen-gui.desktop" 2>/dev/null || true
     chown -R "$REAL_USER:$REAL_USER" "$USER_HOME/.config/autostart"
 fi
 
