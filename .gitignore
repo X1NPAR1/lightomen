@@ -1,0 +1,23 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+
+# Cargo temporary lockfiles
+*.lock.tmp
+
+# Logs and scratch files
+*.log
+*.tmp
+*.swp
+*~
+.DS_Store
+
+# IDE and Editor configs
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# Agent & AI metadata
+.antigravity/
+.gemini/

@@ -1,0 +1,176 @@
+// main.rs: lightomen-daemon entry point
+// Pure std + libc + evdev, zero bloat, <2.5MB RAM footprint.
+
+mod ec;
+mod fan;
+mod hotkey;
+mod hwmon;
+mod ipc;
+mod profile;
+
+use ec::EmbeddedController;
+use fan::FanController;
+use hotkey::HotkeyMonitor;
+use hwmon::HwmonBackend;
+use ipc::IpcServer;
+use profile::ProfileController;
+
+use lightomen_common::{
+    DaemonConfig, DaemonStatus, Telemetry, CONFIG_FILE, FAN_MODE_AUTO,
+};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
+
+static RUNNING: AtomicBool = AtomicBool::new(true);
+
+extern "C" fn sig_handler(_: libc::c_int) {
+    RUNNING.store(false, Ordering::SeqCst);
+}
+
+fn main() {
+    unsafe {
+        libc::signal(libc::SIGINT, sig_handler as *const () as libc::sighandler_t);
+        libc::signal(libc::SIGTERM, sig_handler as *const () as libc::sighandler_t);
+    }
+    // 1. Load persistent configuration
+    let config = DaemonConfig::load_from_file(CONFIG_FILE);
+
+    // 2. Initialize hardware backends
+    let ec = EmbeddedController::new();
+    let mut hwmon = HwmonBackend::new();
+
+    let initial_status = DaemonStatus {
+        telemetry: Telemetry {
+            cpu_temp: 45,
+            gpu_temp: 40,
+            fan1_rpm: 0,
+            fan2_rpm: 0,
+            cpu_power_mw: 15000,
+            gpu_power_mw: 12000,
+            board_id: hwmon.board_id,
+        },
+        config,
+        is_learning_key: 0,
+        _pad0: 0,
+        last_learned_key: config.hotkey_code,
+        _pad1: [0; 4],
+    };
+
+    let status = Arc::new(Mutex::new(initial_status));
+
+    // 3. Start IPC server & Hotkey monitor
+    IpcServer::start(status.clone());
+    HotkeyMonitor::start(status.clone());
+
+    // 4. Initial profile & fan configuration
+    ProfileController::apply_power_profile(&mut hwmon, config.power_profile);
+    ProfileController::apply_mux_mode(&mut hwmon, config.mux_mode);
+
+    let mut last_profile = config.power_profile;
+    let mut last_mux = config.mux_mode;
+
+    // Previous valid readings
+    let mut prev_cpu_temp: u16 = 45;
+    let mut prev_gpu_temp: u16 = 40;
+    let mut prev_fan1_rpm: u16 = 0;
+    let mut prev_fan2_rpm: u16 = 0;
+
+    // 5. Main telemetry & fan control loop
+    while RUNNING.load(Ordering::SeqCst) {
+        let (current_cfg, probe_interval_ms) = {
+            let st = status.lock().unwrap();
+            (st.config, st.config.probe_interval_ms.clamp(500, 3000))
+        };
+
+        // Check if power profile or MUX was changed via IPC
+        if current_cfg.power_profile != last_profile {
+            ProfileController::apply_power_profile(&mut hwmon, current_cfg.power_profile);
+            last_profile = current_cfg.power_profile;
+        }
+        if current_cfg.mux_mode != last_mux {
+            ProfileController::apply_mux_mode(&mut hwmon, current_cfg.mux_mode);
+            last_mux = current_cfg.mux_mode;
+        }
+
+        // Telemetry: CPU Temp (Hwmon primary, EC 0x57 fallback)
+        let raw_cpu_temp = hwmon
+            .read_cpu_temp()
+            .or_else(|| ec.read_cpu_temp())
+            .unwrap_or(prev_cpu_temp)
+            .max(25);
+
+        // Smooth momentary AMD Ryzen Precision Boost spikes (EMA filter: 2/3 weight on prev, 1/3 on new)
+        let cpu_temp = if prev_cpu_temp > 0 {
+            if raw_cpu_temp >= 85 {
+                raw_cpu_temp
+            } else {
+                ((prev_cpu_temp as u32 * 2 + raw_cpu_temp as u32 + 1) / 3) as u16
+            }
+        } else {
+            raw_cpu_temp
+        };
+        prev_cpu_temp = cpu_temp;
+
+        // Telemetry: GPU Temp (EC 0xB7 primary to solve D3cold/cooldown 0°C bug, Hwmon fallback)
+        let gpu_temp = ec
+            .read_gpu_temp()
+            .or_else(|| hwmon.read_gpu_temp())
+            .unwrap_or(prev_gpu_temp)
+            .max(25);
+        prev_gpu_temp = gpu_temp;
+
+        // Telemetry: Fan RPMs (Hwmon fan1_input/fan2_input primary, EC fallback)
+        let (hw_f1, hw_f2) = hwmon.read_fans();
+        let (ec_f1, ec_f2) = ec.read_fan_rpms();
+
+        let fan1_rpm = hw_f1.or(ec_f1).unwrap_or(prev_fan1_rpm);
+        prev_fan1_rpm = fan1_rpm;
+
+        let fan2_rpm = hw_f2.or(ec_f2).unwrap_or(prev_fan2_rpm);
+        prev_fan2_rpm = fan2_rpm;
+
+        // Telemetry: Power estimates (mW)
+        let cpu_power_mw = match current_cfg.power_profile {
+            0 => 12000,
+            1 => 25000,
+            _ => 45000,
+        };
+        let gpu_power_mw = match current_cfg.power_profile {
+            0 => 10000,
+            1 => 35000,
+            _ => 75000,
+        };
+
+        // Apply fan curve / mode (with keep-alive & >=90°C emergency max)
+        FanController::apply(
+            &ec,
+            &mut hwmon,
+            current_cfg.fan_mode,
+            &current_cfg.cpu_curve,
+            &current_cfg.gpu_curve,
+            cpu_temp,
+            gpu_temp,
+        );
+
+        // Update shared status for IPC queries
+        {
+            let mut st = status.lock().unwrap();
+            st.telemetry = Telemetry {
+                cpu_temp,
+                gpu_temp,
+                fan1_rpm,
+                fan2_rpm,
+                cpu_power_mw,
+                gpu_power_mw,
+                board_id: hwmon.board_id,
+            };
+        }
+
+        thread::sleep(Duration::from_millis(probe_interval_ms as u64));
+    }
+
+    // Graceful teardown: ensure fans safely returned to BIOS Auto control
+    hwmon.apply_fan_mode(FAN_MODE_AUTO, 0, 0);
+}

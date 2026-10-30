@@ -1,0 +1,9 @@
+[package]
+name = "lightomen-daemon"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lightomen-common = { path = "../lightomen-common" }
+libc = "0.2"
+evdev = "0.13"

@@ -1,0 +1,16 @@
+[Unit]
+Description=LightOmen Hardware Daemon (HP Omen & Victus Fan & Power Management)
+After=network.target systemd-modules-load.service
+Documentation=https://github.com/lightomen-linux
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/lightomen-daemon
+Restart=always
+RestartSec=2
+KillMode=process
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
