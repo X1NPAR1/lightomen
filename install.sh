@@ -64,10 +64,13 @@ modprobe hp_omen_extra 2>/dev/null || true
 echo -e "\n[4/7] Preparing system & stopping existing services..."
 systemctl stop lightomen-daemon.service 2>/dev/null || true
 systemctl stop ohman-daemon.service 2>/dev/null || true
+systemctl disable ohman-daemon.service 2>/dev/null || true
 pkill -9 -x lightomen-gui 2>/dev/null || true
 pkill -9 -x ohman-gui 2>/dev/null || true
 pkill -9 -x lightomen-tray 2>/dev/null || true
 pkill -9 -x ohman-tray 2>/dev/null || true
+rm -rf /run/lightomen /run/ohman
+rm -f /usr/local/bin/ohman-daemon /usr/local/bin/ohman-gui /usr/local/bin/ohman-tray
 sleep 1
 
 # 5. Check for Pre-compiled Binaries or Build from Source
@@ -76,33 +79,27 @@ DAEMON_SRC=""
 GUI_SRC=""
 TRAY_SRC=""
 
-if [ -f "$SCRIPT_DIR/bin/lightomen-daemon" ] && [ -f "$SCRIPT_DIR/bin/lightomen-gui" ] && [ -f "$SCRIPT_DIR/bin/lightomen-tray" ]; then
+if command -v cargo &>/dev/null; then
+    echo "  -> Compiling fresh release binaries from source via Cargo (lto=fat, opt-level=z)..."
+    sudo -u "$REAL_USER" cargo build --release --workspace --manifest-path "$SCRIPT_DIR/Cargo.toml"
+    DAEMON_SRC="$SCRIPT_DIR/target/release/lightomen-daemon"
+    GUI_SRC="$SCRIPT_DIR/target/release/lightomen-gui"
+    TRAY_SRC="$SCRIPT_DIR/target/release/lightomen-tray"
+elif [ -f "$SCRIPT_DIR/bin/lightomen-daemon" ] && [ -f "$SCRIPT_DIR/bin/lightomen-gui" ] && [ -f "$SCRIPT_DIR/bin/lightomen-tray" ]; then
     echo "  -> Found pre-compiled release binaries in ./bin/ (Skipping Cargo compilation)"
     DAEMON_SRC="$SCRIPT_DIR/bin/lightomen-daemon"
     GUI_SRC="$SCRIPT_DIR/bin/lightomen-gui"
     TRAY_SRC="$SCRIPT_DIR/bin/lightomen-tray"
-elif [ -f "$SCRIPT_DIR/lightomen-daemon" ] && [ -f "$SCRIPT_DIR/lightomen-gui" ] && [ -f "$SCRIPT_DIR/lightomen-tray" ]; then
-    echo "  -> Found pre-compiled release binaries in root directory (Skipping Cargo compilation)"
-    DAEMON_SRC="$SCRIPT_DIR/lightomen-daemon"
-    GUI_SRC="$SCRIPT_DIR/lightomen-gui"
-    TRAY_SRC="$SCRIPT_DIR/lightomen-tray"
 elif [ -f "$SCRIPT_DIR/target/release/lightomen-daemon" ] && [ -f "$SCRIPT_DIR/target/release/lightomen-gui" ] && [ -f "$SCRIPT_DIR/target/release/lightomen-tray" ]; then
     echo "  -> Found existing built release binaries in ./target/release/"
     DAEMON_SRC="$SCRIPT_DIR/target/release/lightomen-daemon"
     GUI_SRC="$SCRIPT_DIR/target/release/lightomen-gui"
     TRAY_SRC="$SCRIPT_DIR/target/release/lightomen-tray"
 else
-    echo "  -> No pre-compiled binaries found. Building from source via Cargo (lto=fat, opt-level=z)..."
-    if ! command -v cargo &>/dev/null; then
-        echo "ERROR: 'cargo' is not installed and pre-compiled binaries were not found."
-        echo "Please install Rust (https://rustup.rs) or download the pre-compiled release package from:"
-        echo "  https://github.com/zyr1on/lightomen/releases"
-        exit 1
-    fi
-    sudo -u "$REAL_USER" cargo build --release --workspace --manifest-path "$SCRIPT_DIR/Cargo.toml"
-    DAEMON_SRC="$SCRIPT_DIR/target/release/lightomen-daemon"
-    GUI_SRC="$SCRIPT_DIR/target/release/lightomen-gui"
-    TRAY_SRC="$SCRIPT_DIR/target/release/lightomen-tray"
+    echo "ERROR: 'cargo' is not installed and pre-compiled binaries were not found."
+    echo "Please install Rust (https://rustup.rs) or download the pre-compiled release package from:"
+    echo "  https://github.com/zyr1on/lightomen/releases"
+    exit 1
 fi
 
 # 6. Install Binaries, Symlinks, Icons & Desktop Files
