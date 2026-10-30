@@ -14,11 +14,12 @@ use eframe::egui::{
 };
 use lightomen_common::{
     DaemonStatus, IpcMessage, ALT_SOCKET_PATH, CMD_CANCEL_KEY_LEARN, CMD_GET_STATUS,
-    CMD_SET_AUTOSTART, CMD_SET_ECO_ON_BATTERY, CMD_SET_FAN_CURVES, CMD_SET_FAN_MODE,
-    CMD_SET_GPU_ZERO_RPM, CMD_SET_LOW_HZ_ON_BATTERY, CMD_SET_MUX_MODE, CMD_SET_POWER_PROFILE,
-    CMD_SET_PROBE_INTERVAL, CMD_START_KEY_LEARN, CURVE_TEMPS, DEFAULT_CPU_CURVE, DEFAULT_GPU_CURVE,
-    FAN_MODE_AUTO, FAN_MODE_CURVE, FAN_MODE_MAX, MUX_MODE_DISCRETE, MUX_MODE_HYBRID,
-    POWER_PROFILE_BALANCED, POWER_PROFILE_ECO, POWER_PROFILE_PERFORMANCE, SOCKET_PATH,
+    CMD_SET_AUTOSTART, CMD_SET_CPU_BOOST, CMD_SET_ECO_ON_BATTERY, CMD_SET_FAN_CURVES,
+    CMD_SET_FAN_MODE, CMD_SET_GPU_ZERO_RPM, CMD_SET_LOW_HZ_ON_BATTERY, CMD_SET_MUX_MODE,
+    CMD_SET_NO_BOOST_ON_BATTERY, CMD_SET_POWER_PROFILE, CMD_SET_PROBE_INTERVAL,
+    CMD_START_KEY_LEARN, CURVE_TEMPS, DEFAULT_CPU_CURVE, DEFAULT_GPU_CURVE, FAN_MODE_AUTO,
+    FAN_MODE_CURVE, FAN_MODE_MAX, MUX_MODE_DISCRETE, MUX_MODE_HYBRID, POWER_PROFILE_BALANCED,
+    POWER_PROFILE_ECO, POWER_PROFILE_PERFORMANCE, SOCKET_PATH,
 };
 use std::fs;
 use std::io::{Read, Write};
@@ -570,8 +571,12 @@ impl LightOmenApp {
                     );
                     ui.add_space(6.0);
                     let f1 = self.status.telemetry.fan1_rpm;
+                    let is_bat = self.status.on_battery == 1;
+                    let boost_disabled = !self.status.config.cpu_boost_enabled()
+                        || (is_bat && self.status.config.no_boost_on_battery());
+                    let boost_suffix = if boost_disabled { " (Boost Off)" } else { "" };
                     let ghz_str = if let Some(ghz) = Self::read_cpu_ghz() {
-                        format!(" · {:.2} GHz", ghz)
+                        format!(" · {:.2} GHz{}", ghz, boost_suffix)
                     } else {
                         String::new()
                     };
@@ -1493,6 +1498,46 @@ impl LightOmenApp {
                         }
                     });
                 });
+
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(8.0);
+
+                // CPU Turbo Boost (Precision Boost)
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.label(egui::RichText::new("CPU Turbo Boost (Precision Boost)").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
+                        ui.label(egui::RichText::new("Enable dynamic clock boost up to 5.0 GHz. Disabling limits clock to base frequency (~4.3 GHz), drastically reducing thermals and fan noise (equivalent to Windows 95% max processor state).").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
+                    });
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let mut boost = self.status.config.cpu_boost_enabled();
+                        if ui.checkbox(&mut boost, "").changed() {
+                            self.status.config.set_cpu_boost_enabled(boost);
+                            Self::send_ipc(CMD_SET_CPU_BOOST, &[if boost { 1 } else { 0 }]);
+                        }
+                    });
+                });
+
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(8.0);
+
+                // Disable Turbo Boost on Battery
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.label(egui::RichText::new("Disable Turbo Boost on Battery").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
+                        ui.label(egui::RichText::new("Automatically disable CPU Turbo Boost when running on battery to prevent power spikes and maximize battery life.").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
+                    });
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let mut no_boost_bat = self.status.config.no_boost_on_battery();
+                        if ui.checkbox(&mut no_boost_bat, "").changed() {
+                            self.status.config.set_no_boost_on_battery(no_boost_bat);
+                            Self::send_ipc(CMD_SET_NO_BOOST_ON_BATTERY, &[if no_boost_bat { 1 } else { 0 }]);
+                        }
+                    });
+                });
             });
 
         ui.add_space(8.0);
@@ -1515,6 +1560,8 @@ impl LightOmenApp {
                             self.status.config.gpu_zero_rpm = 1;
                             self.status.config.set_eco_on_battery(1);
                             self.status.config.set_low_hz_on_battery(1);
+                            self.status.config.set_cpu_boost_enabled(true);
+                            self.status.config.set_no_boost_on_battery(true);
                             self.status.config.hotkey_code = 149;
                             let mut data = [0u8; 14];
                             data[0..7].copy_from_slice(&DEFAULT_CPU_CURVE);
@@ -1524,6 +1571,8 @@ impl LightOmenApp {
                             Self::send_ipc(CMD_SET_GPU_ZERO_RPM, &[1]);
                             Self::send_ipc(CMD_SET_ECO_ON_BATTERY, &[1]);
                             Self::send_ipc(CMD_SET_LOW_HZ_ON_BATTERY, &[1]);
+                            Self::send_ipc(CMD_SET_CPU_BOOST, &[1]);
+                            Self::send_ipc(CMD_SET_NO_BOOST_ON_BATTERY, &[1]);
                         }
                     });
                 });

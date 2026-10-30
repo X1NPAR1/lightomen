@@ -73,6 +73,7 @@ fn main() {
     let mut user_ac_profile = config.power_profile;
     let mut last_mux = config.mux_mode;
     let mut last_ac_online: Option<bool> = None;
+    let mut last_cpu_boost: Option<bool> = None;
 
     // Previous valid readings
     let mut prev_cpu_temp: u16 = 45;
@@ -153,6 +154,19 @@ fn main() {
         if current_cfg.mux_mode != last_mux {
             ProfileController::apply_mux_mode(&mut hwmon, current_cfg.mux_mode);
             last_mux = current_cfg.mux_mode;
+        }
+
+        // Apply CPU Turbo Boost according to config and battery state
+        let desired_boost = if !current_cfg.cpu_boost_enabled() {
+            false
+        } else if on_battery && current_cfg.no_boost_on_battery() {
+            false
+        } else {
+            true
+        };
+        if last_cpu_boost != Some(desired_boost) {
+            hwmon.set_cpu_boost(desired_boost);
+            last_cpu_boost = Some(desired_boost);
         }
 
         // Telemetry: CPU Temp (Hwmon primary, EC 0x57 fallback)

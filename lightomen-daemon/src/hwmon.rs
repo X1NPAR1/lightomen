@@ -345,6 +345,34 @@ impl HwmonBackend {
         Self::write_sysfs_string(&self.gpu_ppab_path, if enable { "1\n" } else { "0\n" })
     }
 
+    /// Enable or disable CPU Turbo Boost (AMD Core Performance Boost / Intel Turbo Boost)
+    pub fn set_cpu_boost(&mut self, enable: bool) -> bool {
+        let val = if enable { "1\n" } else { "0\n" };
+        let mut ok = false;
+        let global_boost = PathBuf::from("/sys/devices/system/cpu/cpufreq/boost");
+        if global_boost.exists() {
+            if fs::write(&global_boost, val).is_ok() {
+                ok = true;
+            }
+        }
+        for i in 0..32 {
+            let p = PathBuf::from(format!("/sys/devices/system/cpu/cpufreq/policy{}/boost", i));
+            if p.exists() {
+                let _ = fs::write(p, val);
+            }
+        }
+        ok
+    }
+
+    #[allow(dead_code)]
+    pub fn is_cpu_boost_enabled(&self) -> bool {
+        let p = PathBuf::from("/sys/devices/system/cpu/cpufreq/boost");
+        if let Ok(s) = fs::read_to_string(p) {
+            return s.trim() != "0";
+        }
+        true
+    }
+
     #[allow(dead_code)]
     pub fn get_mux_mode(&mut self) -> Option<u8> {
         self.gpu_mux_path.as_ref().and_then(|p| {

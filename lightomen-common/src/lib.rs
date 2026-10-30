@@ -66,7 +66,7 @@ pub struct DaemonConfig {
     pub version: u32,             // 4 bytes: CONFIG_VERSION
     pub probe_interval_ms: u16,   // 2 bytes: 500ms to 3000ms
     pub gpu_zero_rpm: u8,         // 1 byte: 1: Zero-RPM when dGPU is in D3cold, 0: standard idle floor
-    pub battery_flags: u8,        // 1 byte: bit 0: eco_on_battery, bit 1: low_hz_on_battery
+    pub battery_flags: u8,        // 1 byte: bit 0: eco_on_bat, bit 1: low_hz_on_bat, bit 2: no_boost, bit 3: no_boost_on_bat
     pub power_profile: u8,        // 1 byte: 0: Eco, 1: Balanced, 2: Performance
     pub fan_mode: u8,             // 1 byte: 0: Auto, 1: Max, 2: Curve
     pub mux_mode: u8,             // 1 byte: 0: Hybrid, 1: Discrete
@@ -83,7 +83,7 @@ impl Default for DaemonConfig {
             version: CONFIG_VERSION,
             probe_interval_ms: 2000,
             gpu_zero_rpm: 1,
-            battery_flags: 3, // bit 0: eco_on_battery=1, bit 1: low_hz_on_battery=1
+            battery_flags: 11, // bit 0: eco=1, bit 1: low_hz=1, bit 2: boost=enabled (0), bit 3: no_boost_on_bat=1 (8)
             power_profile: POWER_PROFILE_BALANCED,
             fan_mode: FAN_MODE_AUTO,
             mux_mode: MUX_MODE_HYBRID,
@@ -121,6 +121,34 @@ impl DaemonConfig {
             self.battery_flags |= 2;
         } else {
             self.battery_flags &= !2;
+        }
+    }
+
+    #[inline]
+    pub fn cpu_boost_enabled(&self) -> bool {
+        (self.battery_flags & 4) == 0
+    }
+
+    #[inline]
+    pub fn set_cpu_boost_enabled(&mut self, enabled: bool) {
+        if enabled {
+            self.battery_flags &= !4;
+        } else {
+            self.battery_flags |= 4;
+        }
+    }
+
+    #[inline]
+    pub fn no_boost_on_battery(&self) -> bool {
+        (self.battery_flags & 8) != 0
+    }
+
+    #[inline]
+    pub fn set_no_boost_on_battery(&mut self, val: bool) {
+        if val {
+            self.battery_flags |= 8;
+        } else {
+            self.battery_flags &= !8;
         }
     }
     pub fn as_bytes(&self) -> &[u8] {
@@ -240,6 +268,8 @@ pub const CMD_SET_HOTKEY: u8 = 12;
 pub const CMD_SET_GPU_ZERO_RPM: u8 = 13;
 pub const CMD_SET_ECO_ON_BATTERY: u8 = 14;
 pub const CMD_SET_LOW_HZ_ON_BATTERY: u8 = 15;
+pub const CMD_SET_CPU_BOOST: u8 = 16;
+pub const CMD_SET_NO_BOOST_ON_BATTERY: u8 = 17;
 
 /// IPC Message Header & Payload (exactly 68 bytes)
 #[repr(C)]
@@ -292,7 +322,14 @@ mod tests {
 
     #[test]
     fn test_config_serde_binary() {
-        let cfg = DaemonConfig::default();
+        let mut cfg = DaemonConfig::default();
+        assert!(cfg.cpu_boost_enabled());
+        assert!(cfg.no_boost_on_battery());
+        cfg.set_cpu_boost_enabled(false);
+        assert!(!cfg.cpu_boost_enabled());
+        cfg.set_no_boost_on_battery(false);
+        assert!(!cfg.no_boost_on_battery());
+
         let bytes = cfg.as_bytes();
         let restored = DaemonConfig::from_bytes(bytes).expect("valid bytes");
         assert_eq!(cfg, restored);
