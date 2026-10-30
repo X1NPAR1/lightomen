@@ -1,0 +1,78 @@
+name: Release Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build & Package (Linux x86_64)
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libudev-dev \
+            libfontconfig1-dev \
+            libx11-dev \
+            libdbus-1-dev \
+            zip
+
+      - name: Build Release Binaries
+        run: |
+          cargo build --release --workspace
+          strip target/release/lightomen-daemon
+          strip target/release/lightomen-gui
+          strip target/release/lightomen-tray
+
+      - name: Assemble Release Bundle
+        id: package
+        run: |
+          VERSION="${GITHUB_REF_NAME:-latest}"
+          PKG_NAME="lightomen-${VERSION}-linux-x86_64"
+          mkdir -p "${PKG_NAME}/bin"
+          
+          # Copy binaries
+          cp target/release/lightomen-daemon "${PKG_NAME}/bin/"
+          cp target/release/lightomen-gui "${PKG_NAME}/bin/"
+          cp target/release/lightomen-tray "${PKG_NAME}/bin/"
+          
+          # Copy auxiliary assets and driver
+          cp -r driver "${PKG_NAME}/"
+          cp -r assets "${PKG_NAME}/"
+          cp -r systemd "${PKG_NAME}/"
+          cp install.sh "${PKG_NAME}/"
+          cp README.md "${PKG_NAME}/"
+          chmod +x "${PKG_NAME}/install.sh"
+          chmod +x "${PKG_NAME}/bin/"*
+
+          # Create archives
+          tar -czvf "${PKG_NAME}.tar.gz" "${PKG_NAME}"
+          zip -r "${PKG_NAME}.zip" "${PKG_NAME}"
+
+          echo "tar_file=${PKG_NAME}.tar.gz" >> $GITHUB_OUTPUT
+          echo "zip_file=${PKG_NAME}.zip" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release & Upload Assets
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            ${{ steps.package.outputs.tar_file }}
+            ${{ steps.package.outputs.zip_file }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false

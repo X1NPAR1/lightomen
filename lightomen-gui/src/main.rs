@@ -287,7 +287,9 @@ impl LightOmenApp {
     fn toggle_autostart(enable: bool) {
         if let Some(home) = std::env::var_os("HOME") {
             let autostart_dir = PathBuf::from(home).join(".config/autostart");
-            let desktop_path = autostart_dir.join("lightomen-gui.desktop");
+            let desktop_path = autostart_dir.join("lightomen-tray.desktop");
+            let legacy_path = autostart_dir.join("lightomen-gui.desktop");
+            let _ = fs::remove_file(legacy_path);
 
             if enable {
                 let _ = fs::create_dir_all(&autostart_dir);
