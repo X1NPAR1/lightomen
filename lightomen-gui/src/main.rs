@@ -571,10 +571,15 @@ impl LightOmenApp {
                     });
                     ui.add_space(4.0);
                     let power_w = (self.status.telemetry.gpu_power_mw as f32 / 1000.0).round() as u32;
+                    let gpu_power_label = if power_w == 0 {
+                        "Sleep (0 W) · RTX 4050".to_string()
+                    } else {
+                        format!("Active (~{} W) · RTX 4050", power_w)
+                    };
                     ui.label(
-                        egui::RichText::new(format!("~{} W · RTX 4050", power_w))
+                        egui::RichText::new(gpu_power_label)
                             .font(FontId::new(11.0, FontFamily::Proportional))
-                            .color(TEXT_DIM),
+                            .color(if power_w == 0 { TEXT_MUTED } else { TEXT_DIM }),
                     );
                     ui.add_space(6.0);
                     let f2 = self.status.telemetry.fan2_rpm;

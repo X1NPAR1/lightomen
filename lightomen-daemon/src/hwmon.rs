@@ -4,6 +4,7 @@
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
+use std::time::Instant;
 
 pub struct HwmonBackend {
     cpu_temp_file: Option<File>,
@@ -18,6 +19,10 @@ pub struct HwmonBackend {
     gpu_ppab_path: Option<PathBuf>,
     gpu_mux_path: Option<PathBuf>,
     graphics_mode_path: Option<PathBuf>,
+    rapl_energy_file: Option<File>,
+    last_energy_uj: u64,
+    last_energy_time: Instant,
+    gpu_pci_status_file: Option<File>,
     pub max_rpm: u16,
     pub board_id: [u8; 8],
     last_applied_mode: Option<u8>,
@@ -66,6 +71,41 @@ impl HwmonBackend {
 
         let max_rpm = paths.max_rpm.unwrap_or(5800).clamp(4000, 7000);
 
+        let rapl_energy_file = {
+            let p1 = PathBuf::from("/sys/class/powercap/intel-rapl:0/energy_uj");
+            let p2 = PathBuf::from("/sys/devices/virtual/powercap/intel-rapl/intel-rapl:0/energy_uj");
+            File::open(p1).or_else(|_| File::open(p2)).ok()
+        };
+
+        let gpu_pci_status_file = {
+            let p = PathBuf::from("/sys/bus/pci/devices/0000:01:00.0/power/runtime_status");
+            if p.exists() {
+                File::open(p).ok()
+            } else {
+                let mut found = None;
+                if let Ok(entries) = fs::read_dir("/sys/bus/pci/devices") {
+                    for entry in entries.flatten() {
+                        let path = entry.path().join("power/runtime_status");
+                        let class_path = entry.path().join("class");
+                        if path.exists() && class_path.exists() {
+                            if let Ok(c) = fs::read_to_string(&class_path) {
+                                if c.trim().starts_with("0x03") {
+                                    let vendor_path = entry.path().join("vendor");
+                                    if let Ok(v) = fs::read_to_string(&vendor_path) {
+                                        if v.trim().contains("0x10de") {
+                                            found = File::open(path).ok();
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                found
+            }
+        };
+
         Self {
             cpu_temp_file,
             gpu_temp_file,
@@ -79,6 +119,10 @@ impl HwmonBackend {
             gpu_ppab_path,
             gpu_mux_path,
             graphics_mode_path,
+            rapl_energy_file,
+            last_energy_uj: 0,
+            last_energy_time: Instant::now(),
+            gpu_pci_status_file,
             max_rpm,
             board_id,
             last_applied_mode: None,
@@ -299,6 +343,78 @@ impl HwmonBackend {
                 }
             }
         }
+    }
+
+    /// Reads live CPU wattage from RAPL energy_uj and checks GPU D3cold sleep state
+    pub fn read_power_metrics(&mut self, power_profile: u8) -> (u32, u32) {
+        let cpu_mw = if let Some(ref mut f) = self.rapl_energy_file {
+            if f.seek(SeekFrom::Start(0)).is_ok() {
+                let mut buf = [0u8; 32];
+                if let Ok(n) = f.read(&mut buf) {
+                    if let Ok(s) = std::str::from_utf8(&buf[..n]) {
+                        if let Ok(cur_uj) = s.trim().parse::<u64>() {
+                            let elapsed = self.last_energy_time.elapsed().as_millis() as u64;
+                            if self.last_energy_uj > 0 && cur_uj > self.last_energy_uj && elapsed > 200 {
+                                let delta_uj = cur_uj - self.last_energy_uj;
+                                let watts_f = (delta_uj as f64) / (elapsed as f64 * 1000.0);
+                                self.last_energy_uj = cur_uj;
+                                self.last_energy_time = Instant::now();
+                                (watts_f * 1000.0).clamp(1000.0, 150000.0) as u32
+                            } else {
+                                if self.last_energy_uj == 0 {
+                                    self.last_energy_uj = cur_uj;
+                                    self.last_energy_time = Instant::now();
+                                }
+                                match power_profile {
+                                    0 => 12000,
+                                    1 => 25000,
+                                    _ => 45000,
+                                }
+                            }
+                        } else {
+                            match power_profile { 0 => 12000, 1 => 25000, _ => 45000 }
+                        }
+                    } else {
+                        match power_profile { 0 => 12000, 1 => 25000, _ => 45000 }
+                    }
+                } else {
+                    match power_profile { 0 => 12000, 1 => 25000, _ => 45000 }
+                }
+            } else {
+                match power_profile { 0 => 12000, 1 => 25000, _ => 45000 }
+            }
+        } else {
+            match power_profile { 0 => 12000, 1 => 25000, _ => 45000 }
+        };
+
+        // GPU Power: If dGPU is in D3cold (suspended), report 0 mW!
+        let is_suspended = if let Some(ref mut f) = self.gpu_pci_status_file {
+            if f.seek(SeekFrom::Start(0)).is_ok() {
+                let mut buf = [0u8; 32];
+                if let Ok(n) = f.read(&mut buf) {
+                    let s = std::str::from_utf8(&buf[..n]).unwrap_or("");
+                    s.trim() == "suspended"
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        let gpu_mw = if is_suspended {
+            0
+        } else {
+            match power_profile {
+                0 => 10000,
+                1 => 35000,
+                _ => 75000,
+            }
+        };
+
+        (cpu_mw, gpu_mw)
     }
 }
 

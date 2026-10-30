@@ -131,17 +131,8 @@ fn main() {
         let fan2_rpm = hw_f2.or(ec_f2).unwrap_or(prev_fan2_rpm);
         prev_fan2_rpm = fan2_rpm;
 
-        // Telemetry: Power estimates (mW)
-        let cpu_power_mw = match current_cfg.power_profile {
-            0 => 12000,
-            1 => 25000,
-            _ => 45000,
-        };
-        let gpu_power_mw = match current_cfg.power_profile {
-            0 => 10000,
-            1 => 35000,
-            _ => 75000,
-        };
+        // Telemetry: Live CPU Power (RAPL) & GPU D3cold sleep state
+        let (cpu_power_mw, gpu_power_mw) = hwmon.read_power_metrics(current_cfg.power_profile);
 
         // Apply fan curve / mode (with keep-alive & >=90°C emergency max)
         FanController::apply(
