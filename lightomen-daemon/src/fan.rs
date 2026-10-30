@@ -58,6 +58,7 @@ impl FanController {
         cpu_temp: u16,
         gpu_temp: u16,
         gpu_zero_rpm_enabled: u8,
+        on_battery: bool,
     ) {
         let max_rpm = hwmon.max_rpm;
 
@@ -76,22 +77,22 @@ impl FanController {
             }
             FAN_MODE_CURVE => {
                 let cpu_pct = Self::evaluate_curve(cpu_curve, cpu_temp);
-                // CPU fan must maintain minimum functional spinning speed (>= 18% / 1800 RPM)
-                // so CPU never starves of cooling while GPU fan is at 0 RPM
-                let target1 = Self::pct_to_rpm(cpu_pct.max(18), max_rpm);
+                let target1 = Self::pct_to_rpm(cpu_pct, max_rpm);
 
                 let target2 = if gpu_temp == 0 {
                     // NVIDIA dGPU is in D3cold power-saving sleep
-                    if gpu_zero_rpm_enabled == 1 {
+                    if on_battery && gpu_zero_rpm_enabled == 1 {
+                        // On battery with Zero-RPM enabled:
                         // Shared heatsink safety: if CPU exceeds 75°C, engage Fan 2 to assist
                         if cpu_temp >= 75 {
                             target1
                         } else {
-                            0 // Full Zero-RPM silent mode!
+                            0 // Full Zero-RPM silent mode on battery!
                         }
                     } else {
-                        // Zero-RPM disabled: maintain standard quiet idle airflow
-                        target1.min(2200).max(1800)
+                        // On AC or Zero-RPM disabled: maintain quiet operational idle airflow
+                        let gpu_pct = Self::evaluate_curve(gpu_curve, 35);
+                        Self::pct_to_rpm(gpu_pct, max_rpm).max(1800).min(2400)
                     }
                 } else {
                     let gpu_pct = Self::evaluate_curve(gpu_curve, gpu_temp);

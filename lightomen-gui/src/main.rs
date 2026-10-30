@@ -952,10 +952,9 @@ impl LightOmenApp {
                         if let Some(m) = mouse_pos {
                             let rel_y = (m.y - (rect.min.y + pad_t)).clamp(0.0, plot_h);
                             let pct_float = (1.0 - (rel_y / plot_h)) * 100.0;
-                            // ClampOrOff: dragging near bottom (< 10%) snaps to 0% (Fan Off / 0 RPM) for unlinked GPU only.
-                            // CPU fan always maintains operational floor (18%..100% / 1800 RPM)
-                            let is_gpu_target = self.curve_tab_gpu && !self.link_curves;
-                            let raw_pct = if pct_float < 10.0 && is_gpu_target {
+                            // ClampOrOff: dragging near bottom (< 10%) snaps to 0% (Fan Off / 0 RPM).
+                            // Above 10%, starts from hardware operational floor of 18%..100% (~1800..6000 RPM).
+                            let raw_pct = if pct_float < 10.0 {
                                 0u8
                             } else {
                                 pct_float.round().clamp(18.0, 100.0) as u8
@@ -1403,11 +1402,11 @@ impl LightOmenApp {
                 ui.separator();
                 ui.add_space(8.0);
 
-                // Zero-RPM for Sleeping dGPU
+                // Zero-RPM GPU Fan on Battery
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
-                        ui.label(egui::RichText::new("Zero-RPM Fan for Sleeping dGPU").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
-                        ui.label(egui::RichText::new("Stop GPU fan (0 RPM) when NVIDIA is in D3cold sleep. Ramps up if CPU reaches 75°C.").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
+                        ui.label(egui::RichText::new("Zero-RPM GPU Fan on Battery").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
+                        ui.label(egui::RichText::new("Stop GPU fan (0 RPM) when running on battery and NVIDIA is in D3cold sleep. Ramps up if CPU reaches 75°C.").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
                     });
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

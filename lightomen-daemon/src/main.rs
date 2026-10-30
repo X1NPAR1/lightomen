@@ -214,6 +214,7 @@ fn main() {
             cpu_temp,
             gpu_temp,
             current_cfg.gpu_zero_rpm,
+            on_battery,
         );
 
         // Update shared status for IPC queries
