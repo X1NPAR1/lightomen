@@ -66,7 +66,7 @@ pub struct DaemonConfig {
     pub version: u32,             // 4 bytes: CONFIG_VERSION
     pub probe_interval_ms: u16,   // 2 bytes: 500ms to 3000ms
     pub gpu_zero_rpm: u8,         // 1 byte: 1: Zero-RPM when dGPU is in D3cold, 0: standard idle floor
-    pub _pad: u8,                 // 1 byte: alignment pad
+    pub eco_on_battery: u8,       // 1 byte: 1: automatically switch to Eco on battery, 0: disabled
     pub power_profile: u8,        // 1 byte: 0: Eco, 1: Balanced, 2: Performance
     pub fan_mode: u8,             // 1 byte: 0: Auto, 1: Max, 2: Curve
     pub mux_mode: u8,             // 1 byte: 0: Hybrid, 1: Discrete
@@ -83,7 +83,7 @@ impl Default for DaemonConfig {
             version: CONFIG_VERSION,
             probe_interval_ms: 2000,
             gpu_zero_rpm: 1,
-            _pad: 0,
+            eco_on_battery: 1,
             power_profile: POWER_PROFILE_BALANCED,
             fan_mode: FAN_MODE_AUTO,
             mux_mode: MUX_MODE_HYBRID,
@@ -160,9 +160,10 @@ pub struct DaemonStatus {
     pub telemetry: Telemetry,     // 24 bytes
     pub config: DaemonConfig,     // 32 bytes
     pub is_learning_key: u8,      // 1 byte: 1 if listening for key
-    pub _pad0: u8,                // 1 byte
+    pub on_battery: u8,           // 1 byte: 1 if running on battery, 0 if AC
     pub last_learned_key: u16,    // 2 bytes: keycode captured
-    pub _pad1: [u8; 4],           // 4 bytes: alignment to 64 bytes
+    pub battery_pct: u8,          // 1 byte: 0..100%
+    pub _pad1: [u8; 3],           // 3 bytes: alignment to 64 bytes
 }
 
 impl Default for DaemonStatus {
@@ -171,9 +172,10 @@ impl Default for DaemonStatus {
             telemetry: Telemetry::default(),
             config: DaemonConfig::default(),
             is_learning_key: 0,
-            _pad0: 0,
+            on_battery: 0,
             last_learned_key: 149,
-            _pad1: [0; 4],
+            battery_pct: 100,
+            _pad1: [0; 3],
         }
     }
 }
@@ -209,6 +211,7 @@ pub const CMD_START_KEY_LEARN: u8 = 10;
 pub const CMD_CANCEL_KEY_LEARN: u8 = 11;
 pub const CMD_SET_HOTKEY: u8 = 12;
 pub const CMD_SET_GPU_ZERO_RPM: u8 = 13;
+pub const CMD_SET_ECO_ON_BATTERY: u8 = 14;
 
 /// IPC Message Header & Payload (exactly 68 bytes)
 #[repr(C)]

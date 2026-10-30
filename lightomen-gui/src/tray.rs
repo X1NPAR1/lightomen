@@ -19,6 +19,8 @@ struct LightOmenTray {
     gpu_temp: u16,
     power_profile: u8,
     fan_mode: u8,
+    on_battery: u8,
+    battery_pct: u8,
 }
 
 impl LightOmenTray {
@@ -28,6 +30,8 @@ impl LightOmenTray {
             gpu_temp: 40,
             power_profile: POWER_PROFILE_BALANCED,
             fan_mode: FAN_MODE_AUTO,
+            on_battery: 0,
+            battery_pct: 100,
         }
     }
 
@@ -77,10 +81,11 @@ impl Tray for LightOmenTray {
     }
 
     fn title(&self) -> String {
+        let pwr = if self.on_battery == 1 { format!(" (Bat {}%)", self.battery_pct) } else { "".to_string() };
         if self.gpu_temp == 0 {
-            format!("LightOmen: CPU {}°C | GPU Sleep (0 W)", self.cpu_temp)
+            format!("LightOmen: CPU {}°C | GPU Sleep{}", self.cpu_temp, pwr)
         } else {
-            format!("LightOmen: CPU {}°C | GPU {}°C", self.cpu_temp, self.gpu_temp)
+            format!("LightOmen: CPU {}°C | GPU {}°C{}", self.cpu_temp, self.gpu_temp, pwr)
         }
     }
 
@@ -90,13 +95,15 @@ impl Tray for LightOmenTray {
         } else {
             format!("{}°C", self.gpu_temp)
         };
+        let pwr_str = if self.on_battery == 1 { format!("Battery ({}%)", self.battery_pct) } else { "AC Online".to_string() };
 
         ToolTip {
             title: "LightOmen Linux".into(),
             description: format!(
-                "CPU: {}°C | GPU: {}\nProfile: {}\nFan Mode: {}",
+                "CPU: {}°C | GPU: {}\nPower: {}\nProfile: {}\nFan Mode: {}",
                 self.cpu_temp,
                 gpu_str,
+                pwr_str,
                 match self.power_profile {
                     0 => "Eco",
                     1 => "Balanced",
@@ -250,6 +257,8 @@ fn main() {
                 tray.gpu_temp = status.telemetry.gpu_temp;
                 tray.power_profile = status.config.power_profile;
                 tray.fan_mode = status.config.fan_mode;
+                tray.on_battery = status.on_battery;
+                tray.battery_pct = status.battery_pct;
             });
         }
         thread::sleep(Duration::from_secs(2));

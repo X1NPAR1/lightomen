@@ -4,9 +4,10 @@
 use crate::hotkey::HotkeyMonitor;
 use lightomen_common::{
     DaemonStatus, IpcMessage, ALT_SOCKET_PATH, CMD_CANCEL_KEY_LEARN, CMD_GET_STATUS,
-    CMD_SET_AUTOSTART, CMD_SET_FAN_CURVES, CMD_SET_FAN_MODE, CMD_SET_GPU_ZERO_RPM, CMD_SET_HOTKEY,
-    CMD_SET_MUX_MODE, CMD_SET_POWER_PROFILE, CMD_SET_PROBE_INTERVAL, CMD_SPAWN_GUI,
-    CMD_START_KEY_LEARN, CMD_TOGGLE_GUI, CONFIG_FILE, SOCKET_PATH,
+    CMD_SET_AUTOSTART, CMD_SET_ECO_ON_BATTERY, CMD_SET_FAN_CURVES, CMD_SET_FAN_MODE,
+    CMD_SET_GPU_ZERO_RPM, CMD_SET_HOTKEY, CMD_SET_MUX_MODE, CMD_SET_POWER_PROFILE,
+    CMD_SET_PROBE_INTERVAL, CMD_SPAWN_GUI, CMD_START_KEY_LEARN, CMD_TOGGLE_GUI, CONFIG_FILE,
+    SOCKET_PATH,
 };
 use std::fs;
 use std::io::{Read, Write};
@@ -128,6 +129,13 @@ impl IpcServer {
                 let zero_rpm = msg.data[0];
                 let mut st = status.lock().unwrap();
                 st.config.gpu_zero_rpm = zero_rpm;
+                let _ = st.config.save_to_file(CONFIG_FILE);
+                let _ = stream.write_all(b"OK");
+            }
+            CMD_SET_ECO_ON_BATTERY => {
+                let eco = msg.data[0];
+                let mut st = status.lock().unwrap();
+                st.config.eco_on_battery = eco;
                 let _ = st.config.save_to_file(CONFIG_FILE);
                 let _ = stream.write_all(b"OK");
             }

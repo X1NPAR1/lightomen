@@ -16,7 +16,7 @@ use ipc::IpcServer;
 use profile::ProfileController;
 
 use lightomen_common::{
-    DaemonConfig, DaemonStatus, Telemetry, CONFIG_FILE, FAN_MODE_AUTO,
+    DaemonConfig, DaemonStatus, Telemetry, CONFIG_FILE, FAN_MODE_AUTO, POWER_PROFILE_ECO,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -53,9 +53,10 @@ fn main() {
         },
         config,
         is_learning_key: 0,
-        _pad0: 0,
+        on_battery: 0,
         last_learned_key: config.hotkey_code,
-        _pad1: [0; 4],
+        battery_pct: 100,
+        _pad1: [0; 3],
     };
 
     let status = Arc::new(Mutex::new(initial_status));
@@ -69,7 +70,9 @@ fn main() {
     ProfileController::apply_mux_mode(&mut hwmon, config.mux_mode);
 
     let mut last_profile = config.power_profile;
+    let mut user_ac_profile = config.power_profile;
     let mut last_mux = config.mux_mode;
+    let mut last_ac_online: Option<bool> = None;
 
     // Previous valid readings
     let mut prev_cpu_temp: u16 = 45;
@@ -79,15 +82,62 @@ fn main() {
 
     // 5. Main telemetry & fan control loop
     while RUNNING.load(Ordering::SeqCst) {
-        let (current_cfg, probe_interval_ms) = {
+        let (mut current_cfg, probe_interval_ms) = {
             let st = status.lock().unwrap();
             (st.config, st.config.probe_interval_ms.clamp(500, 3000))
         };
+
+        // AC vs Battery detection & Auto-Eco power management
+        let is_ac = hwmon.is_ac_online();
+        let on_battery = !is_ac;
+        let battery_pct = hwmon.read_battery_percent();
+
+        if let Some(was_ac) = last_ac_online {
+            if is_ac != was_ac {
+                if !is_ac {
+                    // Transitioned from AC to Battery (unplugged)
+                    if current_cfg.eco_on_battery == 1 && current_cfg.power_profile != POWER_PROFILE_ECO {
+                        user_ac_profile = current_cfg.power_profile;
+                        current_cfg.power_profile = POWER_PROFILE_ECO;
+                        ProfileController::apply_power_profile(&mut hwmon, POWER_PROFILE_ECO);
+                        last_profile = POWER_PROFILE_ECO;
+                        let mut st = status.lock().unwrap();
+                        st.config.power_profile = POWER_PROFILE_ECO;
+                        let _ = st.config.save_to_file(CONFIG_FILE);
+                    }
+                } else {
+                    // Transitioned from Battery to AC (plugged in)
+                    if current_cfg.eco_on_battery == 1 && current_cfg.power_profile != user_ac_profile {
+                        current_cfg.power_profile = user_ac_profile;
+                        ProfileController::apply_power_profile(&mut hwmon, user_ac_profile);
+                        last_profile = user_ac_profile;
+                        let mut st = status.lock().unwrap();
+                        st.config.power_profile = user_ac_profile;
+                        let _ = st.config.save_to_file(CONFIG_FILE);
+                    }
+                }
+                last_ac_online = Some(is_ac);
+            }
+        } else {
+            // Initial boot check
+            if on_battery && current_cfg.eco_on_battery == 1 && current_cfg.power_profile != POWER_PROFILE_ECO {
+                user_ac_profile = current_cfg.power_profile;
+                current_cfg.power_profile = POWER_PROFILE_ECO;
+                ProfileController::apply_power_profile(&mut hwmon, POWER_PROFILE_ECO);
+                last_profile = POWER_PROFILE_ECO;
+                let mut st = status.lock().unwrap();
+                st.config.power_profile = POWER_PROFILE_ECO;
+            }
+            last_ac_online = Some(is_ac);
+        }
 
         // Check if power profile or MUX was changed via IPC
         if current_cfg.power_profile != last_profile {
             ProfileController::apply_power_profile(&mut hwmon, current_cfg.power_profile);
             last_profile = current_cfg.power_profile;
+            if is_ac {
+                user_ac_profile = current_cfg.power_profile;
+            }
         }
         if current_cfg.mux_mode != last_mux {
             ProfileController::apply_mux_mode(&mut hwmon, current_cfg.mux_mode);
@@ -167,6 +217,8 @@ fn main() {
                 gpu_power_mw,
                 board_id: hwmon.board_id,
             };
+            st.on_battery = if on_battery { 1 } else { 0 };
+            st.battery_pct = battery_pct;
         }
 
         thread::sleep(Duration::from_millis(probe_interval_ms as u64));

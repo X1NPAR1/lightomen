@@ -263,6 +263,57 @@ impl HwmonBackend {
         false
     }
 
+    /// Check whether the laptop is currently running on AC power (true) or Battery (false)
+    pub fn is_ac_online(&mut self) -> bool {
+        let paths = [
+            "/sys/class/power_supply/ACAD/online",
+            "/sys/class/power_supply/AC/online",
+            "/sys/class/power_supply/ADP1/online",
+        ];
+        for p in paths {
+            if let Ok(s) = fs::read_to_string(p) {
+                return s.trim() != "0";
+            }
+        }
+        true
+    }
+
+    /// Read remaining battery charge percentage (0..100)
+    pub fn read_battery_percent(&mut self) -> u8 {
+        let paths = [
+            "/sys/class/power_supply/BAT1/capacity",
+            "/sys/class/power_supply/BAT0/capacity",
+            "/sys/class/power_supply/BAT/capacity",
+        ];
+        for p in paths {
+            if let Ok(s) = fs::read_to_string(p) {
+                if let Ok(pct) = s.trim().parse::<u8>() {
+                    return pct.min(100);
+                }
+            }
+        }
+        100
+    }
+
+    /// Read current battery discharge power in milliwatts when running on battery
+    #[allow(dead_code)]
+    pub fn read_battery_discharge_mw(&mut self) -> u32 {
+        let paths = [
+            "/sys/class/power_supply/BAT1/power_now",
+            "/sys/class/power_supply/BAT0/power_now",
+        ];
+        for p in paths {
+            if let Ok(s) = fs::read_to_string(p) {
+                if let Ok(u_watts) = s.trim().parse::<u64>() {
+                    if u_watts > 0 {
+                        return (u_watts / 1000) as u32;
+                    }
+                }
+            }
+        }
+        0
+    }
+
     /// Read dynamic fan RPM directly from hp-wmi hwmon (fan1_input, fan2_input)
     pub fn read_fans(&mut self) -> (Option<u16>, Option<u16>) {
         let f1 = Self::read_fd_number(&mut self.fan1_input_file).and_then(|r| {

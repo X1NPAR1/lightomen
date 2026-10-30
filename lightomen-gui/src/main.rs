@@ -14,11 +14,11 @@ use eframe::egui::{
 };
 use lightomen_common::{
     DaemonStatus, IpcMessage, ALT_SOCKET_PATH, CMD_CANCEL_KEY_LEARN, CMD_GET_STATUS,
-    CMD_SET_AUTOSTART, CMD_SET_FAN_CURVES, CMD_SET_FAN_MODE, CMD_SET_GPU_ZERO_RPM, CMD_SET_MUX_MODE,
-    CMD_SET_POWER_PROFILE, CMD_SET_PROBE_INTERVAL, CMD_START_KEY_LEARN, CURVE_TEMPS,
-    DEFAULT_CPU_CURVE, DEFAULT_GPU_CURVE, FAN_MODE_AUTO, FAN_MODE_CURVE, FAN_MODE_MAX,
-    MUX_MODE_DISCRETE, MUX_MODE_HYBRID, POWER_PROFILE_BALANCED, POWER_PROFILE_ECO,
-    POWER_PROFILE_PERFORMANCE, SOCKET_PATH,
+    CMD_SET_AUTOSTART, CMD_SET_ECO_ON_BATTERY, CMD_SET_FAN_CURVES, CMD_SET_FAN_MODE,
+    CMD_SET_GPU_ZERO_RPM, CMD_SET_MUX_MODE, CMD_SET_POWER_PROFILE, CMD_SET_PROBE_INTERVAL,
+    CMD_START_KEY_LEARN, CURVE_TEMPS, DEFAULT_CPU_CURVE, DEFAULT_GPU_CURVE, FAN_MODE_AUTO,
+    FAN_MODE_CURVE, FAN_MODE_MAX, MUX_MODE_DISCRETE, MUX_MODE_HYBRID, POWER_PROFILE_BALANCED,
+    POWER_PROFILE_ECO, POWER_PROFILE_PERFORMANCE, SOCKET_PATH,
 };
 use std::fs;
 use std::io::{Read, Write};
@@ -726,6 +726,8 @@ impl LightOmenApp {
         let cpu_watts = self.status.telemetry.cpu_power_mw as f32 / 1000.0;
         let gpu_watts = self.status.telemetry.gpu_power_mw as f32 / 1000.0;
         let total_watts = cpu_watts + gpu_watts;
+        let on_battery = self.status.on_battery == 1;
+        let battery_pct = self.status.battery_pct;
 
         egui::Frame::none()
             .fill(CARD_BG)
@@ -734,10 +736,15 @@ impl LightOmenApp {
             .inner_margin(12.0)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
+                    let card_title = if on_battery {
+                        format!("🔋 BATTERY DISCHARGE ({battery_pct}%)")
+                    } else {
+                        "⚡ REAL-TIME POWER DRAIN (AC ONLINE)".to_string()
+                    };
                     ui.label(
-                        egui::RichText::new("⚡ REAL-TIME POWER DRAIN")
+                        egui::RichText::new(card_title)
                             .font(FontId::new(10.5, FontFamily::Proportional))
-                            .color(TEXT_MUTED),
+                            .color(if on_battery { COLOR_ECO } else { TEXT_MUTED }),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(
@@ -818,7 +825,8 @@ impl LightOmenApp {
             ui.label(egui::RichText::new("Daemon Active · /run/lightomen/lightomen.sock").font(FontId::new(10.5, FontFamily::Monospace)).color(TEXT_DIM));
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(egui::RichText::new(format!("Probe {}s", self.status.config.probe_interval_ms as f32 / 1000.0)).font(FontId::new(10.5, FontFamily::Monospace)).color(TEXT_DIM));
+                let power_str = if on_battery { format!("🔋 Battery {}%", battery_pct) } else { "⚡ AC Online".to_string() };
+                ui.label(egui::RichText::new(format!("{} · Probe {}s", power_str, self.status.config.probe_interval_ms as f32 / 1000.0)).font(FontId::new(10.5, FontFamily::Monospace)).color(TEXT_DIM));
             });
         });
     }
@@ -1409,6 +1417,26 @@ impl LightOmenApp {
                         }
                     });
                 });
+
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(8.0);
+
+                // Auto Eco on Battery
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.label(egui::RichText::new("Auto Eco Mode on Battery").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
+                        ui.label(egui::RichText::new("Automatically switch to Eco profile when unplugged, and restore previous profile on AC.").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
+                    });
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let mut eco = self.status.config.eco_on_battery == 1;
+                        if ui.checkbox(&mut eco, "").changed() {
+                            self.status.config.eco_on_battery = if eco { 1 } else { 0 };
+                            Self::send_ipc(CMD_SET_ECO_ON_BATTERY, &[self.status.config.eco_on_battery]);
+                        }
+                    });
+                });
             });
 
         ui.add_space(8.0);
@@ -1429,6 +1457,7 @@ impl LightOmenApp {
                             self.status.config.gpu_curve = DEFAULT_GPU_CURVE;
                             self.status.config.probe_interval_ms = 2000;
                             self.status.config.gpu_zero_rpm = 1;
+                            self.status.config.eco_on_battery = 1;
                             self.status.config.hotkey_code = 149;
                             let mut data = [0u8; 14];
                             data[0..7].copy_from_slice(&DEFAULT_CPU_CURVE);
@@ -1436,6 +1465,7 @@ impl LightOmenApp {
                             Self::send_ipc(CMD_SET_FAN_CURVES, &data);
                             Self::send_ipc(CMD_SET_PROBE_INTERVAL, &2000u16.to_le_bytes());
                             Self::send_ipc(CMD_SET_GPU_ZERO_RPM, &[1]);
+                            Self::send_ipc(CMD_SET_ECO_ON_BATTERY, &[1]);
                         }
                     });
                 });
