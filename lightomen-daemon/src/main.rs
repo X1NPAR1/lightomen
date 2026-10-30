@@ -152,6 +152,7 @@ fn main() {
             &current_cfg.gpu_curve,
             cpu_temp,
             gpu_temp,
+            current_cfg.gpu_zero_rpm,
         );
 
         // Update shared status for IPC queries

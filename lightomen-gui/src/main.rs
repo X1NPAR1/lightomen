@@ -14,7 +14,7 @@ use eframe::egui::{
 };
 use lightomen_common::{
     DaemonStatus, IpcMessage, ALT_SOCKET_PATH, CMD_CANCEL_KEY_LEARN, CMD_GET_STATUS,
-    CMD_SET_AUTOSTART, CMD_SET_FAN_CURVES, CMD_SET_FAN_MODE, CMD_SET_MUX_MODE,
+    CMD_SET_AUTOSTART, CMD_SET_FAN_CURVES, CMD_SET_FAN_MODE, CMD_SET_GPU_ZERO_RPM, CMD_SET_MUX_MODE,
     CMD_SET_POWER_PROFILE, CMD_SET_PROBE_INTERVAL, CMD_START_KEY_LEARN, CURVE_TEMPS,
     DEFAULT_CPU_CURVE, DEFAULT_GPU_CURVE, FAN_MODE_AUTO, FAN_MODE_CURVE, FAN_MODE_MAX,
     MUX_MODE_DISCRETE, MUX_MODE_HYBRID, POWER_PROFILE_BALANCED, POWER_PROFILE_ECO,
@@ -1377,7 +1377,7 @@ impl LightOmenApp {
                     });
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let intervals = [(500, "0.5s"), (1000, "1.0s"), (2000, "2.0s"), (3000, "3.0s")];
+                        let intervals = [(500u16, "0.5s"), (1000u16, "1.0s"), (2000u16, "2.0s"), (3000u16, "3.0s")];
                         for (val, label) in intervals {
                             let selected = self.status.config.probe_interval_ms == val;
                             let btn = ui.selectable_label(selected, label);
@@ -1386,6 +1386,26 @@ impl LightOmenApp {
                                 let data = val.to_le_bytes();
                                 Self::send_ipc(CMD_SET_PROBE_INTERVAL, &data);
                             }
+                        }
+                    });
+                });
+
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(8.0);
+
+                // Zero-RPM for Sleeping dGPU
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.label(egui::RichText::new("Zero-RPM Fan for Sleeping dGPU").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
+                        ui.label(egui::RichText::new("Stop GPU fan (0 RPM) when NVIDIA is in D3cold sleep. Ramps up if CPU reaches 75°C.").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
+                    });
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let mut zero_rpm = self.status.config.gpu_zero_rpm == 1;
+                        if ui.checkbox(&mut zero_rpm, "").changed() {
+                            self.status.config.gpu_zero_rpm = if zero_rpm { 1 } else { 0 };
+                            Self::send_ipc(CMD_SET_GPU_ZERO_RPM, &[self.status.config.gpu_zero_rpm]);
                         }
                     });
                 });
@@ -1408,12 +1428,14 @@ impl LightOmenApp {
                             self.status.config.cpu_curve = DEFAULT_CPU_CURVE;
                             self.status.config.gpu_curve = DEFAULT_GPU_CURVE;
                             self.status.config.probe_interval_ms = 2000;
+                            self.status.config.gpu_zero_rpm = 1;
                             self.status.config.hotkey_code = 149;
                             let mut data = [0u8; 14];
                             data[0..7].copy_from_slice(&DEFAULT_CPU_CURVE);
                             data[7..14].copy_from_slice(&DEFAULT_GPU_CURVE);
                             Self::send_ipc(CMD_SET_FAN_CURVES, &data);
-                            Self::send_ipc(CMD_SET_PROBE_INTERVAL, &2000u32.to_le_bytes());
+                            Self::send_ipc(CMD_SET_PROBE_INTERVAL, &2000u16.to_le_bytes());
+                            Self::send_ipc(CMD_SET_GPU_ZERO_RPM, &[1]);
                         }
                     });
                 });

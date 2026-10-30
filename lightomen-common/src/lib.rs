@@ -64,7 +64,9 @@ impl Default for Telemetry {
 pub struct DaemonConfig {
     pub magic: u32,               // 4 bytes: CONFIG_MAGIC
     pub version: u32,             // 4 bytes: CONFIG_VERSION
-    pub probe_interval_ms: u32,   // 4 bytes: 500ms to 3000ms
+    pub probe_interval_ms: u16,   // 2 bytes: 500ms to 3000ms
+    pub gpu_zero_rpm: u8,         // 1 byte: 1: Zero-RPM when dGPU is in D3cold, 0: standard idle floor
+    pub _pad: u8,                 // 1 byte: alignment pad
     pub power_profile: u8,        // 1 byte: 0: Eco, 1: Balanced, 2: Performance
     pub fan_mode: u8,             // 1 byte: 0: Auto, 1: Max, 2: Curve
     pub mux_mode: u8,             // 1 byte: 0: Hybrid, 1: Discrete
@@ -80,6 +82,8 @@ impl Default for DaemonConfig {
             magic: CONFIG_MAGIC,
             version: CONFIG_VERSION,
             probe_interval_ms: 2000,
+            gpu_zero_rpm: 1,
+            _pad: 0,
             power_profile: POWER_PROFILE_BALANCED,
             fan_mode: FAN_MODE_AUTO,
             mux_mode: MUX_MODE_HYBRID,
@@ -204,6 +208,7 @@ pub const CMD_SET_AUTOSTART: u8 = 9;
 pub const CMD_START_KEY_LEARN: u8 = 10;
 pub const CMD_CANCEL_KEY_LEARN: u8 = 11;
 pub const CMD_SET_HOTKEY: u8 = 12;
+pub const CMD_SET_GPU_ZERO_RPM: u8 = 13;
 
 /// IPC Message Header & Payload (exactly 68 bytes)
 #[repr(C)]
