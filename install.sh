@@ -65,6 +65,8 @@ echo -e "\n[4/7] Preparing system & stopping existing services..."
 systemctl stop lightomen-daemon.service 2>/dev/null || true
 systemctl stop ohman-daemon.service 2>/dev/null || true
 systemctl disable ohman-daemon.service 2>/dev/null || true
+pkill -9 -x lightomen-daemon 2>/dev/null || true
+pkill -9 -x ohman-daemon 2>/dev/null || true
 pkill -9 -x lightomen-gui 2>/dev/null || true
 pkill -9 -x ohman-gui 2>/dev/null || true
 pkill -9 -x lightomen-tray 2>/dev/null || true
