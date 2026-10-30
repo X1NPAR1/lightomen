@@ -155,6 +155,7 @@ impl SystemSpecs {
 struct LightOmenApp {
     status: DaemonStatus,
     last_poll: Instant,
+    cached_cpu_ghz: Option<f32>,
     active_tab: ActiveTab,
     curve_tab_gpu: bool,
     link_curves: bool,
@@ -168,9 +169,11 @@ impl LightOmenApp {
         Self::ensure_tray_running();
         let initial_status = Self::fetch_daemon_status().unwrap_or_default();
         let link_curves = Self::load_gui_config();
+        let cached_cpu_ghz = Self::read_cpu_ghz();
         Self {
             status: initial_status,
             last_poll: Instant::now(),
+            cached_cpu_ghz,
             active_tab: ActiveTab::Dashboard,
             curve_tab_gpu: false,
             link_curves,
@@ -337,6 +340,7 @@ impl eframe::App for LightOmenApp {
                     self.status = st;
                 }
             }
+            self.cached_cpu_ghz = Self::read_cpu_ghz();
             self.last_poll = Instant::now();
         }
 
@@ -575,7 +579,7 @@ impl LightOmenApp {
                     let boost_disabled = !self.status.config.cpu_boost_enabled()
                         || (is_bat && self.status.config.no_boost_on_battery());
                     let boost_suffix = if boost_disabled { " (Boost Off)" } else { "" };
-                    let ghz_str = if let Some(ghz) = Self::read_cpu_ghz() {
+                    let ghz_str = if let Some(ghz) = self.cached_cpu_ghz {
                         format!(" · {:.2} GHz{}", ghz, boost_suffix)
                     } else {
                         String::new()
@@ -1504,6 +1508,7 @@ impl LightOmenApp {
                 ui.add_space(8.0);
 
                 // CPU Turbo Boost (Precision Boost)
+                let master_boost = self.status.config.cpu_boost_enabled();
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
                         ui.label(egui::RichText::new("CPU Turbo Boost (Precision Boost)").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
@@ -1511,7 +1516,7 @@ impl LightOmenApp {
                     });
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let mut boost = self.status.config.cpu_boost_enabled();
+                        let mut boost = master_boost;
                         if ui.checkbox(&mut boost, "").changed() {
                             self.status.config.set_cpu_boost_enabled(boost);
                             Self::send_ipc(CMD_SET_CPU_BOOST, &[if boost { 1 } else { 0 }]);
@@ -1526,16 +1531,25 @@ impl LightOmenApp {
                 // Disable Turbo Boost on Battery
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
-                        ui.label(egui::RichText::new("Disable Turbo Boost on Battery").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
-                        ui.label(egui::RichText::new("Automatically disable CPU Turbo Boost when running on battery to prevent power spikes and maximize battery life.").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
+                        let title_color = if master_boost { TEXT_PRIMARY } else { TEXT_DIM };
+                        let sub_color = if master_boost { TEXT_MUTED } else { TEXT_DIM };
+                        ui.label(egui::RichText::new("Disable Turbo Boost on Battery").font(FontId::new(13.0, FontFamily::Proportional)).color(title_color));
+                        let desc = if master_boost {
+                            "Automatically disable CPU Turbo Boost when running on battery to prevent power spikes and maximize battery life."
+                        } else {
+                            "Disabled: Turbo Boost is already turned off globally across both AC and battery."
+                        };
+                        ui.label(egui::RichText::new(desc).font(FontId::new(11.0, FontFamily::Proportional)).color(sub_color));
                     });
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let mut no_boost_bat = self.status.config.no_boost_on_battery();
-                        if ui.checkbox(&mut no_boost_bat, "").changed() {
-                            self.status.config.set_no_boost_on_battery(no_boost_bat);
-                            Self::send_ipc(CMD_SET_NO_BOOST_ON_BATTERY, &[if no_boost_bat { 1 } else { 0 }]);
-                        }
+                        ui.add_enabled_ui(master_boost, |ui| {
+                            let mut no_boost_bat = self.status.config.no_boost_on_battery();
+                            if ui.checkbox(&mut no_boost_bat, "").changed() {
+                                self.status.config.set_no_boost_on_battery(no_boost_bat);
+                                Self::send_ipc(CMD_SET_NO_BOOST_ON_BATTERY, &[if no_boost_bat { 1 } else { 0 }]);
+                            }
+                        });
                     });
                 });
             });
