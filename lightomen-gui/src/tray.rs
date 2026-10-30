@@ -233,6 +233,13 @@ impl Tray for LightOmenTray {
     }
 }
 
+fn apply_refresh_rate(hz: u32) {
+    let mode_arg = format!("1920x1080@{}", hz);
+    let _ = std::process::Command::new("kscreen-doctor")
+        .arg(format!("output.1.mode.{}", mode_arg))
+        .spawn();
+}
+
 fn main() {
     // Force Mesa/integrated AMD graphics: never probe or wake NVIDIA dGPU
     std::env::set_var("DRI_PRIME", "0");
@@ -250,8 +257,18 @@ fn main() {
         })
         .expect("failed to spawn tray service");
 
+    let mut prev_on_battery: Option<bool> = None;
+
     loop {
         if let Some(status) = LightOmenTray::fetch_status() {
+            let on_bat = status.on_battery == 1;
+            if prev_on_battery != Some(on_bat) {
+                if prev_on_battery.is_some() && status.config.low_hz_on_battery() == 1 {
+                    apply_refresh_rate(if on_bat { 60 } else { 144 });
+                }
+                prev_on_battery = Some(on_bat);
+            }
+
             handle.update(|tray| {
                 tray.cpu_temp = status.telemetry.cpu_temp;
                 tray.gpu_temp = status.telemetry.gpu_temp;

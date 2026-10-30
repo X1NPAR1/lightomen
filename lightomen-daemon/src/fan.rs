@@ -76,7 +76,9 @@ impl FanController {
             }
             FAN_MODE_CURVE => {
                 let cpu_pct = Self::evaluate_curve(cpu_curve, cpu_temp);
-                let target1 = Self::pct_to_rpm(cpu_pct, max_rpm);
+                // CPU fan must maintain minimum functional spinning speed (>= 18% / 1800 RPM)
+                // so CPU never starves of cooling while GPU fan is at 0 RPM
+                let target1 = Self::pct_to_rpm(cpu_pct.max(18), max_rpm);
 
                 let target2 = if gpu_temp == 0 {
                     // NVIDIA dGPU is in D3cold power-saving sleep

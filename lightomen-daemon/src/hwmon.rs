@@ -380,8 +380,15 @@ impl HwmonBackend {
                 let t1_diff = (t1 as i32 - self.last_target1 as i32).abs();
                 let t2_diff = (t2 as i32 - self.last_target2 as i32).abs();
 
-                // Only write when mode changed or targets shifted by >= 40 RPM (or transition to/from 0)
-                if mode_changed || t1_diff >= 40 || t2_diff >= 40 || (t1 == 0 && self.last_target1 != 0) || (t1 != 0 && self.last_target1 == 0) {
+                // Only write when mode changed, targets shifted by >= 40 RPM, or transition to/from 0
+                if mode_changed
+                    || t1_diff >= 40
+                    || t2_diff >= 40
+                    || (t1 == 0 && self.last_target1 != 0)
+                    || (t1 != 0 && self.last_target1 == 0)
+                    || (t2 == 0 && self.last_target2 != 0)
+                    || (t2 != 0 && self.last_target2 == 0)
+                {
                     let _ = Self::write_sysfs_string(&self.fan1_target_path, &format!("{}\n", t1));
                     let _ = Self::write_sysfs_string(&self.fan2_target_path, &format!("{}\n", t2));
                     self.last_applied_mode = Some(2);

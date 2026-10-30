@@ -13,7 +13,7 @@ pub const CONFIG_FILE: &str = "/etc/lightomen/config.bin";
 pub const ALT_CONFIG_FILE: &str = "/etc/ohman/config.bin";
 
 pub const CURVE_TEMPS: [u8; 7] = [30, 40, 50, 60, 70, 80, 90];
-pub const DEFAULT_CPU_CURVE: [u8; 7] = [25, 30, 40, 52, 65, 80, 100];
+pub const DEFAULT_CPU_CURVE: [u8; 7] = [20, 30, 40, 52, 65, 80, 100];
 pub const DEFAULT_GPU_CURVE: [u8; 7] = [20, 25, 35, 48, 60, 75, 100];
 
 pub const POWER_PROFILE_ECO: u8 = 0;
@@ -66,7 +66,7 @@ pub struct DaemonConfig {
     pub version: u32,             // 4 bytes: CONFIG_VERSION
     pub probe_interval_ms: u16,   // 2 bytes: 500ms to 3000ms
     pub gpu_zero_rpm: u8,         // 1 byte: 1: Zero-RPM when dGPU is in D3cold, 0: standard idle floor
-    pub eco_on_battery: u8,       // 1 byte: 1: automatically switch to Eco on battery, 0: disabled
+    pub battery_flags: u8,        // 1 byte: bit 0: eco_on_battery, bit 1: low_hz_on_battery
     pub power_profile: u8,        // 1 byte: 0: Eco, 1: Balanced, 2: Performance
     pub fan_mode: u8,             // 1 byte: 0: Auto, 1: Max, 2: Curve
     pub mux_mode: u8,             // 1 byte: 0: Hybrid, 1: Discrete
@@ -83,7 +83,7 @@ impl Default for DaemonConfig {
             version: CONFIG_VERSION,
             probe_interval_ms: 2000,
             gpu_zero_rpm: 1,
-            eco_on_battery: 1,
+            battery_flags: 3, // bit 0: eco_on_battery=1, bit 1: low_hz_on_battery=1
             power_profile: POWER_PROFILE_BALANCED,
             fan_mode: FAN_MODE_AUTO,
             mux_mode: MUX_MODE_HYBRID,
@@ -96,6 +96,33 @@ impl Default for DaemonConfig {
 }
 
 impl DaemonConfig {
+    #[inline]
+    pub fn eco_on_battery(&self) -> u8 {
+        self.battery_flags & 1
+    }
+
+    #[inline]
+    pub fn set_eco_on_battery(&mut self, val: u8) {
+        if val == 1 {
+            self.battery_flags |= 1;
+        } else {
+            self.battery_flags &= !1;
+        }
+    }
+
+    #[inline]
+    pub fn low_hz_on_battery(&self) -> u8 {
+        (self.battery_flags >> 1) & 1
+    }
+
+    #[inline]
+    pub fn set_low_hz_on_battery(&mut self, val: u8) {
+        if val == 1 {
+            self.battery_flags |= 2;
+        } else {
+            self.battery_flags &= !2;
+        }
+    }
     pub fn as_bytes(&self) -> &[u8] {
         unsafe {
             std::slice::from_raw_parts(
@@ -212,6 +239,7 @@ pub const CMD_CANCEL_KEY_LEARN: u8 = 11;
 pub const CMD_SET_HOTKEY: u8 = 12;
 pub const CMD_SET_GPU_ZERO_RPM: u8 = 13;
 pub const CMD_SET_ECO_ON_BATTERY: u8 = 14;
+pub const CMD_SET_LOW_HZ_ON_BATTERY: u8 = 15;
 
 /// IPC Message Header & Payload (exactly 68 bytes)
 #[repr(C)]

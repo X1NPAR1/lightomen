@@ -15,10 +15,10 @@ use eframe::egui::{
 use lightomen_common::{
     DaemonStatus, IpcMessage, ALT_SOCKET_PATH, CMD_CANCEL_KEY_LEARN, CMD_GET_STATUS,
     CMD_SET_AUTOSTART, CMD_SET_ECO_ON_BATTERY, CMD_SET_FAN_CURVES, CMD_SET_FAN_MODE,
-    CMD_SET_GPU_ZERO_RPM, CMD_SET_MUX_MODE, CMD_SET_POWER_PROFILE, CMD_SET_PROBE_INTERVAL,
-    CMD_START_KEY_LEARN, CURVE_TEMPS, DEFAULT_CPU_CURVE, DEFAULT_GPU_CURVE, FAN_MODE_AUTO,
-    FAN_MODE_CURVE, FAN_MODE_MAX, MUX_MODE_DISCRETE, MUX_MODE_HYBRID, POWER_PROFILE_BALANCED,
-    POWER_PROFILE_ECO, POWER_PROFILE_PERFORMANCE, SOCKET_PATH,
+    CMD_SET_GPU_ZERO_RPM, CMD_SET_LOW_HZ_ON_BATTERY, CMD_SET_MUX_MODE, CMD_SET_POWER_PROFILE,
+    CMD_SET_PROBE_INTERVAL, CMD_START_KEY_LEARN, CURVE_TEMPS, DEFAULT_CPU_CURVE, DEFAULT_GPU_CURVE,
+    FAN_MODE_AUTO, FAN_MODE_CURVE, FAN_MODE_MAX, MUX_MODE_DISCRETE, MUX_MODE_HYBRID,
+    POWER_PROFILE_BALANCED, POWER_PROFILE_ECO, POWER_PROFILE_PERFORMANCE, SOCKET_PATH,
 };
 use std::fs;
 use std::io::{Read, Write};
@@ -952,9 +952,10 @@ impl LightOmenApp {
                         if let Some(m) = mouse_pos {
                             let rel_y = (m.y - (rect.min.y + pad_t)).clamp(0.0, plot_h);
                             let pct_float = (1.0 - (rel_y / plot_h)) * 100.0;
-                            // ClampOrOff: dragging near bottom (< 10%) snaps to 0% (Fan Off / 0 RPM).
-                            // Above 10%, starts from hardware operational floor of 18%..100%.
-                            let raw_pct = if pct_float < 10.0 {
+                            // ClampOrOff: dragging near bottom (< 10%) snaps to 0% (Fan Off / 0 RPM) for unlinked GPU only.
+                            // CPU fan always maintains operational floor (18%..100% / 1800 RPM)
+                            let is_gpu_target = self.curve_tab_gpu && !self.link_curves;
+                            let raw_pct = if pct_float < 10.0 && is_gpu_target {
                                 0u8
                             } else {
                                 pct_float.round().clamp(18.0, 100.0) as u8
@@ -1430,10 +1431,35 @@ impl LightOmenApp {
                     });
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let mut eco = self.status.config.eco_on_battery == 1;
+                        let mut eco = self.status.config.eco_on_battery() == 1;
                         if ui.checkbox(&mut eco, "").changed() {
-                            self.status.config.eco_on_battery = if eco { 1 } else { 0 };
-                            Self::send_ipc(CMD_SET_ECO_ON_BATTERY, &[self.status.config.eco_on_battery]);
+                            self.status.config.set_eco_on_battery(if eco { 1 } else { 0 });
+                            Self::send_ipc(CMD_SET_ECO_ON_BATTERY, &[if eco { 1 } else { 0 }]);
+                        }
+                    });
+                });
+
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(8.0);
+
+                // Lowest Refresh Rate on Battery (60 Hz)
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.label(egui::RichText::new("Lowest Refresh Rate on Battery (60 Hz)").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
+                        ui.label(egui::RichText::new("Automatically switch screen to 60 Hz on battery, restore maximum refresh rate (144 Hz) on AC.").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
+                    });
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let mut low_hz = self.status.config.low_hz_on_battery() == 1;
+                        if ui.checkbox(&mut low_hz, "").changed() {
+                            self.status.config.set_low_hz_on_battery(if low_hz { 1 } else { 0 });
+                            Self::send_ipc(CMD_SET_LOW_HZ_ON_BATTERY, &[if low_hz { 1 } else { 0 }]);
+                            let is_bat = self.status.on_battery == 1;
+                            let target_hz = if low_hz && is_bat { 60 } else { 144 };
+                            let _ = Command::new("kscreen-doctor")
+                                .arg(format!("output.1.mode.1920x1080@{}", target_hz))
+                                .spawn();
                         }
                     });
                 });
@@ -1457,7 +1483,8 @@ impl LightOmenApp {
                             self.status.config.gpu_curve = DEFAULT_GPU_CURVE;
                             self.status.config.probe_interval_ms = 2000;
                             self.status.config.gpu_zero_rpm = 1;
-                            self.status.config.eco_on_battery = 1;
+                            self.status.config.set_eco_on_battery(1);
+                            self.status.config.set_low_hz_on_battery(1);
                             self.status.config.hotkey_code = 149;
                             let mut data = [0u8; 14];
                             data[0..7].copy_from_slice(&DEFAULT_CPU_CURVE);
@@ -1466,6 +1493,7 @@ impl LightOmenApp {
                             Self::send_ipc(CMD_SET_PROBE_INTERVAL, &2000u16.to_le_bytes());
                             Self::send_ipc(CMD_SET_GPU_ZERO_RPM, &[1]);
                             Self::send_ipc(CMD_SET_ECO_ON_BATTERY, &[1]);
+                            Self::send_ipc(CMD_SET_LOW_HZ_ON_BATTERY, &[1]);
                         }
                     });
                 });

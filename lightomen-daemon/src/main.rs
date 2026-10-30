@@ -96,7 +96,10 @@ fn main() {
             if is_ac != was_ac {
                 if !is_ac {
                     // Transitioned from AC to Battery (unplugged)
-                    if current_cfg.eco_on_battery == 1 && current_cfg.power_profile != POWER_PROFILE_ECO {
+                    if current_cfg.low_hz_on_battery() == 1 {
+                        HotkeyMonitor::set_display_refresh_rate(60);
+                    }
+                    if current_cfg.eco_on_battery() == 1 && current_cfg.power_profile != POWER_PROFILE_ECO {
                         user_ac_profile = current_cfg.power_profile;
                         current_cfg.power_profile = POWER_PROFILE_ECO;
                         ProfileController::apply_power_profile(&mut hwmon, POWER_PROFILE_ECO);
@@ -107,7 +110,10 @@ fn main() {
                     }
                 } else {
                     // Transitioned from Battery to AC (plugged in)
-                    if current_cfg.eco_on_battery == 1 && current_cfg.power_profile != user_ac_profile {
+                    if current_cfg.low_hz_on_battery() == 1 {
+                        HotkeyMonitor::set_display_refresh_rate(144);
+                    }
+                    if current_cfg.eco_on_battery() == 1 && current_cfg.power_profile != user_ac_profile {
                         current_cfg.power_profile = user_ac_profile;
                         ProfileController::apply_power_profile(&mut hwmon, user_ac_profile);
                         last_profile = user_ac_profile;
@@ -120,13 +126,18 @@ fn main() {
             }
         } else {
             // Initial boot check
-            if on_battery && current_cfg.eco_on_battery == 1 && current_cfg.power_profile != POWER_PROFILE_ECO {
-                user_ac_profile = current_cfg.power_profile;
-                current_cfg.power_profile = POWER_PROFILE_ECO;
-                ProfileController::apply_power_profile(&mut hwmon, POWER_PROFILE_ECO);
-                last_profile = POWER_PROFILE_ECO;
-                let mut st = status.lock().unwrap();
-                st.config.power_profile = POWER_PROFILE_ECO;
+            if on_battery {
+                if current_cfg.low_hz_on_battery() == 1 {
+                    HotkeyMonitor::set_display_refresh_rate(60);
+                }
+                if current_cfg.eco_on_battery() == 1 && current_cfg.power_profile != POWER_PROFILE_ECO {
+                    user_ac_profile = current_cfg.power_profile;
+                    current_cfg.power_profile = POWER_PROFILE_ECO;
+                    ProfileController::apply_power_profile(&mut hwmon, POWER_PROFILE_ECO);
+                    last_profile = POWER_PROFILE_ECO;
+                    let mut st = status.lock().unwrap();
+                    st.config.power_profile = POWER_PROFILE_ECO;
+                }
             }
             last_ac_online = Some(is_ac);
         }

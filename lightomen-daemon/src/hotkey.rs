@@ -190,9 +190,7 @@ impl HotkeyMonitor {
         }
     }
 
-    /// Spawns lightomen-gui in the active user session on Wayland
-    pub fn spawn_gui() {
-        // Find active graphical user (UID 1000 or from /run/user/)
+    pub fn detect_user_session() -> (String, u32, String, String) {
         let mut target_uid = 1000u32;
         let mut target_user = "zyron".to_string();
         let mut runtime_dir = format!("/run/user/{}", target_uid);
@@ -220,7 +218,6 @@ impl HotkeyMonitor {
             }
         }
 
-        // Determine Wayland display socket
         let mut wayland_disp = "wayland-0".to_string();
         if let Ok(entries) = fs::read_dir(&runtime_dir) {
             for entry in entries.flatten() {
@@ -232,6 +229,30 @@ impl HotkeyMonitor {
                 }
             }
         }
+
+        (target_user, target_uid, runtime_dir, wayland_disp)
+    }
+
+    /// Set display refresh rate in user session via kscreen-doctor
+    pub fn set_display_refresh_rate(hz: u32) {
+        let (target_user, _, _, _) = Self::detect_user_session();
+        let machine_arg = format!("--machine={}@.host", target_user);
+        let mode_arg = format!("1920x1080@{}", hz);
+
+        let _ = Command::new("systemd-run")
+            .args([
+                "--user",
+                &machine_arg,
+                "--quiet",
+                "kscreen-doctor",
+                &format!("output.1.mode.{}", mode_arg),
+            ])
+            .spawn();
+    }
+
+    /// Spawns lightomen-gui in the active user session on Wayland
+    pub fn spawn_gui() {
+        let (target_user, target_uid, runtime_dir, wayland_disp) = Self::detect_user_session();
 
         let binary_path = if Path::new("/usr/local/bin/lightomen-gui").exists() {
             "/usr/local/bin/lightomen-gui"
