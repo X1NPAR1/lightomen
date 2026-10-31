@@ -305,12 +305,14 @@ static const struct dmi_system_id victus_s_thermal_profile_boards[] __initconst 
 		.driver_data = (void *)&omen_v1_thermal_params,
 	},
 	{
+		/* [LIGHTOMEN PATCH]: 8BD4 (HP Victus 16-s0xxx) with known EC thermal profile offset (0x59) */
 		.matches    = {DMI_MATCH(DMI_BOARD_NAME, "8BD4")},
-		.driver_data = (void *)&victus_s_thermal_params,
+		.driver_data = (void *)&victus_s_known_ec_thermal_params,
 	},
 	{
+		/* [LIGHTOMEN PATCH]: 8BD5 (HP Victus 16-r0xxx) with known EC thermal profile offset (0x59) */
 		.matches    = {DMI_MATCH(DMI_BOARD_NAME, "8BD5")},
-		.driver_data = (void *)&victus_s_thermal_params,
+		.driver_data = (void *)&victus_s_known_ec_thermal_params,
 	},
 	{
 		.matches    = {DMI_MATCH(DMI_BOARD_NAME, "8C76")},
@@ -1656,6 +1658,10 @@ static int hp_wmi_get_mux_supported_modes(u8 *supported)
 	if (!has_nvidia_gpu())
 		return -ENODEV;
 
+	/*
+	 * [LIGHTOMEN PATCH]: Supply 4-byte buffer (z4) as insize rather than 0
+	 * so HP ACPI hpqBDataIn receives the expected buffer size without faulting.
+	 */
 	ret = hp_wmi_perform_query(HPWMI_GRAPHICS_MUX_QUERY, HPWMI_READ,
 				   legacy_buffer, sizeof(legacy_buffer), sizeof(legacy_buffer));
 	if (ret < 0)
@@ -1696,7 +1702,10 @@ static int hp_wmi_set_mux_mode(u8 mode)
 				   buffer, sizeof(buffer), sizeof(buffer));
 	if (ret < 0)
 		return ret;
-	/* Return code 6 on HP WMI 0x52 indicates accepted pending restart */
+	/*
+	 * [LIGHTOMEN PATCH]: Return code 6 on HP WMI 0x52 indicates
+	 * "accepted pending restart" rather than a command failure.
+	 */
 	if (ret > 0 && ret != 6)
 		return -EINVAL;
 
@@ -3190,7 +3199,10 @@ static int hp_wmi_apply_fan_settings(struct hp_wmi_hwmon_priv *priv)
 	case PWM_MODE_MANUAL:
 		if (!priv->fan_speed_available)
 			return -EOPNOTSUPP;
-		/* Disengage max-fan hardware flag if leaving max mode */
+		/*
+		 * [LIGHTOMEN PATCH]: Disengage max-fan hardware flag if leaving max mode
+		 * so the EC releases the hardware MAX boost lock before applying target RPMs.
+		 */
 		if (priv->prev_mode == PWM_MODE_MAX) {
 			ret = hp_wmi_fan_speed_max_set(0);
 			if (ret < 0)
@@ -3376,6 +3388,10 @@ static int hp_wmi_hwmon_write(struct device *dev, enum hwmon_sensor_types type,
 				rpm = clamp_val(rpm, priv->min_rpm, priv->max_rpm);
 			}
 			priv->target_rpms[0] = (u16)rpm * 100;
+			/*
+			 * [LIGHTOMEN PATCH]: Symmetrical fan targets without artificial
+			 * gpu_delta boost so Fan 1 (CPU) and Fan 2 (GPU) spin at equal RPMs.
+			 */
 			priv->target_rpms[1] = (u16)(rpm > 0 ? (u16)rpm * 100 : 0);
 			priv->pwm = val;
 			ret = hp_wmi_apply_fan_settings(priv);
@@ -3398,8 +3414,9 @@ static int hp_wmi_hwmon_write(struct device *dev, enum hwmon_sensor_types type,
 				break; /* already in MANUAL, preserve target_rpms */
 
 			/*
-			 * Seed target RPMs from current fan speed for smooth transition
-			 * only if not coming from MAX mode and targets are not already set.
+			 * [LIGHTOMEN PATCH]: Seed target RPMs from current fan speed for smooth
+			 * transition only if not coming from MAX mode and targets are not already set.
+			 * Coming from MAX would incorrectly lock the fans to 5800 RPM.
 			 */
 			if (priv->prev_mode != PWM_MODE_MAX && priv->target_rpms[0] == 0) {
 				if (priv->uses_victus_s_fan_commands)
@@ -3632,6 +3649,7 @@ static int hp_wmi_setup_fan_settings(struct hp_wmi_hwmon_priv *priv)
 				
 				priv->min_rpm = min_rpm;
 				priv->max_rpm = max_rpm;
+				/* [LIGHTOMEN PATCH]: gpu_delta zeroed out for symmetric CPU & GPU fan speeds */
 				priv->gpu_delta = 0;
 				priv->max_rpms[0] = max_rpm * 100;
 				priv->max_rpms[1] = max_rpm * 100;
