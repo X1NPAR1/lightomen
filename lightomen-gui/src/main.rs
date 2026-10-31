@@ -8,6 +8,9 @@
 #![allow(float_literal_f32_fallback)]
 
 mod icon_data;
+mod i18n;
+
+use i18n::Language;
 
 use eframe::egui::{
     self, Color32, FontFamily, FontId, Pos2, Rounding, Sense, Stroke, Ui, Vec2,
@@ -167,6 +170,7 @@ struct LightOmenApp {
     reset_window_level_at: Option<Instant>,
     diagnostic_report: Option<String>,
     diagnostic_status: Option<String>,
+    pub language: Language,
 }
 
 impl LightOmenApp {
@@ -178,6 +182,7 @@ impl LightOmenApp {
         let initial_status = Self::fetch_daemon_status().unwrap_or_default();
         let link_curves = Self::load_gui_config();
         let cached_cpu_ghz = Self::read_cpu_ghz();
+        let language = Language::load();
         Self {
             status: initial_status,
             last_poll: Instant::now(),
@@ -193,6 +198,7 @@ impl LightOmenApp {
             reset_window_level_at: None,
             diagnostic_report: None,
             diagnostic_status: None,
+            language,
         }
     }
 
@@ -610,7 +616,8 @@ impl LightOmenApp {
 
             // Tab 0: Dashboard (Home / Telemetry)
             let is_active0 = self.active_tab == ActiveTab::Dashboard;
-            if render_rail_tab_icon(ui, "⚡", is_active0, accent, "Dashboard").clicked() {
+            let tip0 = if self.language.is_tr() { "Kontrol Paneli" } else { "Dashboard" };
+            if render_rail_tab_icon(ui, "⚡", is_active0, accent, tip0).clicked() {
                 self.active_tab = ActiveTab::Dashboard;
             }
 
@@ -618,7 +625,8 @@ impl LightOmenApp {
 
             // Tab 1: Fan Curve
             let is_active1 = self.active_tab == ActiveTab::FanCurve;
-            if render_rail_tab_icon(ui, "📈", is_active1, accent, "Fan Curve").clicked() {
+            let tip1 = if self.language.is_tr() { "Fan Grafiği" } else { "Fan Curve" };
+            if render_rail_tab_icon(ui, "📈", is_active1, accent, tip1).clicked() {
                 self.active_tab = ActiveTab::FanCurve;
             }
 
@@ -626,7 +634,8 @@ impl LightOmenApp {
 
             // Tab 2: Graphics / MUX Switch
             let is_active2 = self.active_tab == ActiveTab::GraphicsMux;
-            if render_rail_tab_icon(ui, "🎮", is_active2, accent, "Graphics MUX Switch").clicked() {
+            let tip2 = if self.language.is_tr() { "Grafik MUX Anahtarı" } else { "Graphics MUX Switch" };
+            if render_rail_tab_icon(ui, "🎮", is_active2, accent, tip2).clicked() {
                 self.active_tab = ActiveTab::GraphicsMux;
             }
 
@@ -634,7 +643,8 @@ impl LightOmenApp {
 
             // Tab 3: System Hardware Specs
             let is_active3 = self.active_tab == ActiveTab::SystemInfo;
-            if render_rail_tab_icon(ui, "💻", is_active3, accent, "System Specifications").clicked() {
+            let tip3 = if self.language.is_tr() { "Sistem Özellikleri" } else { "System Specifications" };
+            if render_rail_tab_icon(ui, "💻", is_active3, accent, tip3).clicked() {
                 self.active_tab = ActiveTab::SystemInfo;
             }
 
@@ -642,7 +652,8 @@ impl LightOmenApp {
 
             // Tab 4: Settings (Gear)
             let is_active4 = self.active_tab == ActiveTab::Settings;
-            if render_rail_tab_icon(ui, "⚙", is_active4, accent, "Settings & OMEN Key").clicked() {
+            let tip4 = if self.language.is_tr() { "Ayarlar ve OMEN Tuşu" } else { "Settings & OMEN Key" };
+            if render_rail_tab_icon(ui, "⚙", is_active4, accent, tip4).clicked() {
                 self.active_tab = ActiveTab::Settings;
             }
         });
@@ -784,16 +795,28 @@ impl LightOmenApp {
                     let is_bat = self.status.on_battery == 1;
                     let boost_disabled = !self.status.config.cpu_boost_enabled()
                         || (is_bat && self.status.config.no_boost_on_battery());
-                    let boost_suffix = if boost_disabled { " (Boost Off)" } else { "" };
+                    let boost_suffix = if boost_disabled {
+                        if self.language.is_tr() { " (Boost Kapalı)" } else { " (Boost Off)" }
+                    } else {
+                        ""
+                    };
                     let ghz_str = if let Some(ghz) = self.cached_cpu_ghz {
                         format!(" · {:.2} GHz{}", ghz, boost_suffix)
                     } else {
                         String::new()
                     };
-                    let fan_label = if f1 > 0 {
-                        format!("CPU fan: {} rpm{}", f1, ghz_str)
+                    let fan_label = if self.language.is_tr() {
+                        if f1 > 0 {
+                            format!("CPU fanı: {} rpm{}", f1, ghz_str)
+                        } else {
+                            format!("CPU fanı: 0 rpm (Sessiz){}", ghz_str)
+                        }
                     } else {
-                        format!("CPU fan: 0 rpm (Quiet){}", ghz_str)
+                        if f1 > 0 {
+                            format!("CPU fan: {} rpm{}", f1, ghz_str)
+                        } else {
+                            format!("CPU fan: 0 rpm (Quiet){}", ghz_str)
+                        }
                     };
                     ui.label(egui::RichText::new(fan_label).font(FontId::new(11.5, FontFamily::Monospace)).color(accent));
                 });
@@ -809,8 +832,9 @@ impl LightOmenApp {
                     ui.add_space(2.0);
                     if is_gpu_asleep {
                         ui.horizontal(|ui| {
+                            let sleep_label = if self.language.is_tr() { "Uyku" } else { "Sleep" };
                             ui.label(
-                                egui::RichText::new("Sleep")
+                                egui::RichText::new(sleep_label)
                                     .font(FontId::new(32.0, FontFamily::Proportional))
                                     .color(COLOR_OK)
                                     .strong(),
@@ -818,8 +842,9 @@ impl LightOmenApp {
                             ui.label(egui::RichText::new("D3cold").font(FontId::new(11.0, FontFamily::Monospace)).color(COLOR_OK));
                         });
                         ui.add_space(8.0);
+                        let standby_label = if self.language.is_tr() { "NVIDIA RTX 4050 · Beklemede" } else { "NVIDIA RTX 4050 · Standby" };
                         ui.label(
-                            egui::RichText::new("NVIDIA RTX 4050 · Standby")
+                            egui::RichText::new(standby_label)
                                 .font(FontId::new(11.0, FontFamily::Proportional))
                                 .color(TEXT_DIM),
                         );
@@ -834,15 +859,20 @@ impl LightOmenApp {
                             ui.label(egui::RichText::new("°C").font(FontId::new(18.0, FontFamily::Proportional)).color(TEXT_MUTED));
                         });
                         ui.add_space(4.0);
+                        let active_label = if self.language.is_tr() { "NVIDIA RTX 4050 · Aktif" } else { "NVIDIA RTX 4050 · Active" };
                         ui.label(
-                            egui::RichText::new("NVIDIA RTX 4050 · Active")
+                            egui::RichText::new(active_label)
                                 .font(FontId::new(11.0, FontFamily::Proportional))
                                 .color(TEXT_DIM),
                         );
                     }
                     ui.add_space(6.0);
                     let f2 = self.status.telemetry.fan2_rpm;
-                    let fan_label = if f2 > 0 { format!("GPU fan: {} rpm", f2) } else { "GPU fan: 0 rpm (Quiet)".to_string() };
+                    let fan_label = if self.language.is_tr() {
+                        if f2 > 0 { format!("GPU fanı: {} rpm", f2) } else { "GPU fanı: 0 rpm (Sessiz)".to_string() }
+                    } else {
+                        if f2 > 0 { format!("GPU fan: {} rpm", f2) } else { "GPU fan: 0 rpm (Quiet)".to_string() }
+                    };
                     ui.label(egui::RichText::new(fan_label).font(FontId::new(11.5, FontFamily::Monospace)).color(accent));
                 });
         });
@@ -850,7 +880,8 @@ impl LightOmenApp {
         ui.add_space(10.0);
 
         // Power Profiles (Eco, Balanced, Performance)
-        ui.label(egui::RichText::new("POWER PROFILES").font(FontId::new(10.5, FontFamily::Proportional)).color(TEXT_DIM));
+        let pwr_title = if self.language.is_tr() { "GÜÇ PROFİLLERİ" } else { "POWER PROFILES" };
+        ui.label(egui::RichText::new(pwr_title).font(FontId::new(10.5, FontFamily::Proportional)).color(TEXT_DIM));
         ui.columns(3, |cols| {
             let cur = self.status.config.power_profile;
 
@@ -908,8 +939,9 @@ impl LightOmenApp {
 
         ui.add_space(10.0);
 
-        // Fan Control (Auto, Max, Curve)
-        ui.label(egui::RichText::new("FANS").font(FontId::new(10.5, FontFamily::Proportional)).color(TEXT_DIM));
+        // Fan Control (Auto, Max, Curve / Grafik)
+        let fans_title = if self.language.is_tr() { "FANLAR" } else { "FANS" };
+        ui.label(egui::RichText::new(fans_title).font(FontId::new(10.5, FontFamily::Proportional)).color(TEXT_DIM));
         ui.columns(3, |cols| {
             let cur = self.status.config.fan_mode;
 
@@ -949,8 +981,9 @@ impl LightOmenApp {
 
             // Curve: When clicked, sets Curve mode AND navigates directly to Tab 1!
             let is_curve = cur == FAN_MODE_CURVE;
+            let curve_label = if self.language.is_tr() { "Grafik →" } else { "Curve →" };
             let btn_curve = egui::Button::new(
-                egui::RichText::new("Curve →")
+                egui::RichText::new(curve_label)
                     .font(FontId::new(13.0, FontFamily::Proportional))
                     .color(if is_curve { accent } else { TEXT_PRIMARY }),
             )
@@ -982,10 +1015,18 @@ impl LightOmenApp {
             .inner_margin(12.0)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    let card_title = if on_battery {
-                        format!("🔋 BATTERY DISCHARGE ({battery_pct}%)")
+                    let card_title = if self.language.is_tr() {
+                        if on_battery {
+                            format!("🔋 BATARYA DEŞARJI (%{battery_pct})")
+                        } else {
+                            "⚡ ANLIK GÜÇ TÜKETİMİ (AC BAĞLI)".to_string()
+                        }
                     } else {
-                        "⚡ REAL-TIME POWER DRAIN (AC ONLINE)".to_string()
+                        if on_battery {
+                            format!("🔋 BATTERY DISCHARGE ({battery_pct}%)")
+                        } else {
+                            "⚡ REAL-TIME POWER DRAIN (AC ONLINE)".to_string()
+                        }
                     };
                     ui.label(
                         egui::RichText::new(card_title)
@@ -993,8 +1034,9 @@ impl LightOmenApp {
                             .color(if on_battery { COLOR_ECO } else { TEXT_MUTED }),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let comb_suffix = if self.language.is_tr() { "Toplam" } else { "Combined" };
                         ui.label(
-                            egui::RichText::new(format!("{:.1} W Combined", total_watts))
+                            egui::RichText::new(format!("{:.1} W {}", total_watts, comb_suffix))
                                 .font(FontId::new(11.5, FontFamily::Monospace))
                                 .color(accent)
                                 .strong(),
@@ -1022,7 +1064,8 @@ impl LightOmenApp {
                                 );
                                 ui.label(egui::RichText::new("W").font(FontId::new(11.0, FontFamily::Monospace)).color(TEXT_DIM));
                             });
-                            ui.label(egui::RichText::new("Hardware powercap (No wake)").font(FontId::new(9.5, FontFamily::Proportional)).color(TEXT_DIM));
+                            let rapl_sub = if self.language.is_tr() { "Donanım güç sınırı (Uyanma yok)" } else { "Hardware powercap (No wake)" };
+                            ui.label(egui::RichText::new(rapl_sub).font(FontId::new(9.5, FontFamily::Proportional)).color(TEXT_DIM));
                         });
 
                     // NVIDIA dGPU (PCIe D3cold)
@@ -1044,7 +1087,8 @@ impl LightOmenApp {
                                     ui.label(egui::RichText::new("W").font(FontId::new(11.0, FontFamily::Monospace)).color(COLOR_OK));
                                     ui.label(egui::RichText::new("· D3cold").font(FontId::new(10.5, FontFamily::Monospace)).color(COLOR_OK));
                                 });
-                                ui.label(egui::RichText::new("Deep sleep / Zero watt (0 W)").font(FontId::new(9.5, FontFamily::Proportional)).color(COLOR_OK));
+                                let deep_sub = if self.language.is_tr() { "Derin uyku / Sıfır güç (0 W)" } else { "Deep sleep / Zero watt (0 W)" };
+                                ui.label(egui::RichText::new(deep_sub).font(FontId::new(9.5, FontFamily::Proportional)).color(COLOR_OK));
                             } else {
                                 ui.horizontal(|ui| {
                                     ui.label(
@@ -1054,9 +1098,11 @@ impl LightOmenApp {
                                             .strong(),
                                     );
                                     ui.label(egui::RichText::new("W").font(FontId::new(11.0, FontFamily::Monospace)).color(TEXT_DIM));
-                                    ui.label(egui::RichText::new("· Active").font(FontId::new(10.5, FontFamily::Monospace)).color(COLOR_PERF));
+                                    let act_label = if self.language.is_tr() { "· Aktif" } else { "· Active" };
+                                    ui.label(egui::RichText::new(act_label).font(FontId::new(10.5, FontFamily::Monospace)).color(COLOR_PERF));
                                 });
-                                ui.label(egui::RichText::new("Active power draw").font(FontId::new(9.5, FontFamily::Proportional)).color(TEXT_DIM));
+                                let act_sub = if self.language.is_tr() { "Aktif güç tüketimi" } else { "Active power draw" };
+                                ui.label(egui::RichText::new(act_sub).font(FontId::new(9.5, FontFamily::Proportional)).color(TEXT_DIM));
                             }
                         });
                 });
@@ -1068,23 +1114,34 @@ impl LightOmenApp {
         ui.horizontal(|ui| {
             let (dot_rect, _) = ui.allocate_exact_size(Vec2::new(8.0, 8.0), Sense::hover());
             ui.painter().circle_filled(dot_rect.center(), 3.5, COLOR_OK);
-            ui.label(egui::RichText::new("Daemon Active · /run/lightomen/lightomen.sock").font(FontId::new(10.5, FontFamily::Monospace)).color(TEXT_DIM));
+            let daemon_msg = if self.language.is_tr() { "Daemon Aktif · /run/lightomen/lightomen.sock" } else { "Daemon Active · /run/lightomen/lightomen.sock" };
+            ui.label(egui::RichText::new(daemon_msg).font(FontId::new(10.5, FontFamily::Monospace)).color(TEXT_DIM));
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let power_str = if on_battery { format!("🔋 Battery {}%", battery_pct) } else { "⚡ AC Online".to_string() };
-                ui.label(egui::RichText::new(format!("{} · Probe {}s", power_str, self.status.config.probe_interval_ms as f32 / 1000.0)).font(FontId::new(10.5, FontFamily::Monospace)).color(TEXT_DIM));
+                let power_str = if self.language.is_tr() {
+                    if on_battery { format!("🔋 Batarya %{}", battery_pct) } else { "⚡ AC Bağlı".to_string() }
+                } else {
+                    if on_battery { format!("🔋 Battery {}%", battery_pct) } else { "⚡ AC Online".to_string() }
+                };
+                let probe_word = if self.language.is_tr() { "Aralık" } else { "Probe" };
+                ui.label(egui::RichText::new(format!("{} · {} {}s", power_str, probe_word, self.status.config.probe_interval_ms as f32 / 1000.0)).font(FontId::new(10.5, FontFamily::Monospace)).color(TEXT_DIM));
             });
         });
     }
 
     /// Tab 1: Fan Curve Editor with Link curves toggle, bounds checking, and live temp marker
     fn render_fan_curve_tab(&mut self, ui: &mut Ui, accent: Color32) {
+        let curve_title = if self.language.is_tr() { "FAN GRAFİĞİ DÜZENLEYİCİ" } else { "FAN CURVE EDITOR" };
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("FAN CURVE EDITOR").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_HI).strong());
+            ui.label(egui::RichText::new(curve_title).font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_HI).strong());
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // Link CPU and GPU Curve toggle button
-                let link_label = if self.link_curves { "🔗 Linked (CPU + GPU)" } else { "🔓 Independent Curves" };
+                let link_label = if self.language.is_tr() {
+                    if self.link_curves { "🔗 Bağlı (CPU + GPU)" } else { "🔓 Bağımsız Grafikler" }
+                } else {
+                    if self.link_curves { "🔗 Linked (CPU + GPU)" } else { "🔓 Independent Curves" }
+                };
                 let link_btn = ui.add(
                     egui::Button::new(egui::RichText::new(link_label).font(FontId::new(11.0, FontFamily::Proportional)).color(if self.link_curves { accent } else { TEXT_MUTED }))
                         .fill(PILL_BG)
@@ -1111,10 +1168,12 @@ impl LightOmenApp {
         // Sub-tabs if unlinked
         if !self.link_curves {
             ui.horizontal(|ui| {
-                if ui.selectable_label(!self.curve_tab_gpu, "CPU Fan Curve").clicked() {
+                let cpu_tab_label = if self.language.is_tr() { "CPU Fan Grafiği" } else { "CPU Fan Curve" };
+                let gpu_tab_label = if self.language.is_tr() { "GPU Fan Grafiği" } else { "GPU Fan Curve" };
+                if ui.selectable_label(!self.curve_tab_gpu, cpu_tab_label).clicked() {
                     self.curve_tab_gpu = false;
                 }
-                if ui.selectable_label(self.curve_tab_gpu, "GPU Fan Curve").clicked() {
+                if ui.selectable_label(self.curve_tab_gpu, gpu_tab_label).clicked() {
                     self.curve_tab_gpu = true;
                 }
             });
@@ -1265,7 +1324,8 @@ impl LightOmenApp {
 
                     if is_hovered || self.active_drag_idx == Some(i) {
                         let cur_val = if self.curve_tab_gpu && !self.link_curves { self.status.config.gpu_curve[i] } else { self.status.config.cpu_curve[i] };
-                        let label_str = if cur_val == 0 { "0 RPM (Off)".to_string() } else { format!("{}%", cur_val) };
+                        let off_label = if self.language.is_tr() { "0 RPM (Kapalı)" } else { "0 RPM (Off)" };
+                        let label_str = if cur_val == 0 { off_label.to_string() } else { format!("{}%", cur_val) };
                         let label_col = if cur_val == 0 { COLOR_OK } else { TEXT_HI };
                         painter.text(Pos2::new(pt.x, pt.y - 12.0), egui::Align2::CENTER_BOTTOM, label_str, FontId::new(10.5, FontFamily::Monospace), label_col);
                     }
@@ -1287,9 +1347,11 @@ impl LightOmenApp {
 
         // Presets & Controls
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Presets:").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_DIM));
+            let presets_label = if self.language.is_tr() { "Hazır Profiller:" } else { "Presets:" };
+            ui.label(egui::RichText::new(presets_label).font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_DIM));
 
-            if ui.button("Quiet").clicked() {
+            let quiet_text = if self.language.is_tr() { "Sessiz" } else { "Quiet" };
+            if ui.button(quiet_text).clicked() {
                 let quiet = [18, 20, 25, 35, 50, 70, 100];
                 self.status.config.cpu_curve = quiet;
                 self.status.config.gpu_curve = quiet;
@@ -1301,7 +1363,8 @@ impl LightOmenApp {
                 Self::send_ipc(CMD_SET_FAN_MODE, &[FAN_MODE_CURVE]);
             }
 
-            if ui.button("Balanced").clicked() {
+            let balanced_text = if self.language.is_tr() { "Dengeli" } else { "Balanced" };
+            if ui.button(balanced_text).clicked() {
                 self.status.config.cpu_curve = DEFAULT_CPU_CURVE;
                 self.status.config.gpu_curve = DEFAULT_GPU_CURVE;
                 self.status.config.fan_mode = FAN_MODE_CURVE;
@@ -1312,7 +1375,8 @@ impl LightOmenApp {
                 Self::send_ipc(CMD_SET_FAN_MODE, &[FAN_MODE_CURVE]);
             }
 
-            if ui.button("Aggressive").clicked() {
+            let agg_text = if self.language.is_tr() { "Agresif" } else { "Aggressive" };
+            if ui.button(agg_text).clicked() {
                 let agg = [35, 45, 55, 68, 80, 92, 100];
                 self.status.config.cpu_curve = agg;
                 self.status.config.gpu_curve = agg;
@@ -1326,8 +1390,9 @@ impl LightOmenApp {
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if self.status.config.fan_mode != FAN_MODE_CURVE {
+                    let apply_label = if self.language.is_tr() { "⚡ Grafiği Uygula ve Başlat" } else { "⚡ Apply & Activate Curve" };
                     let apply_btn = egui::Button::new(
-                        egui::RichText::new("⚡ Apply & Activate Curve")
+                        egui::RichText::new(apply_label)
                             .font(FontId::new(12.0, FontFamily::Proportional))
                             .color(Color32::WHITE)
                             .strong(),
@@ -1339,8 +1404,9 @@ impl LightOmenApp {
                         Self::send_ipc(CMD_SET_FAN_MODE, &[FAN_MODE_CURVE]);
                     }
                 } else {
+                    let active_mode_label = if self.language.is_tr() { "● Grafik Modu Aktif" } else { "● Curve Mode Active" };
                     ui.label(
-                        egui::RichText::new("● Curve Mode Active")
+                        egui::RichText::new(active_mode_label)
                             .font(FontId::new(12.0, FontFamily::Proportional))
                             .color(COLOR_OK)
                             .strong(),
@@ -1352,7 +1418,8 @@ impl LightOmenApp {
 
     /// Tab 2: Graphics MUX Switch Tab (Hybrid vs Discrete, text wrapping fixed, restart prompt)
     fn render_graphics_tab(&mut self, ui: &mut Ui, accent: Color32) {
-        ui.label(egui::RichText::new("GRAPHICS SWITCHER (MUX SWITCH)").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_HI).strong());
+        let title = if self.language.is_tr() { "DONANIM GRAFİK (MUX) GEÇİŞİ" } else { "HARDWARE GRAPHICS MUX SWITCH" };
+        ui.label(egui::RichText::new(title).font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_HI).strong());
         ui.add_space(4.0);
 
         let is_discrete = self.status.config.mux_mode == MUX_MODE_DISCRETE;
@@ -1371,16 +1438,26 @@ impl LightOmenApp {
                         ui.label(egui::RichText::new("Hybrid Mode (Optimus / PRIME)").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY).strong());
                         ui.add_space(2.0);
                         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                        let hybrid_desc = if self.language.is_tr() {
+                            "AMD Radeon iGPU dahili ekranı yönetir; NVIDIA RTX 4050 dGPU ağır iş yüklerinde PRIME Render Offload ile otomatik devreye girer. Maksimum pil ömrü ve serin çalışma sunar."
+                        } else {
+                            "AMD Radeon iGPU manages the internal display; NVIDIA RTX 4050 dGPU activates seamlessly via PRIME Render Offload during intense workloads. Maximizes battery runtime and cool operation."
+                        };
                         ui.label(
-                            egui::RichText::new("AMD Radeon iGPU dahili ekranı yönetir; NVIDIA RTX 4050 dGPU ağır iş yüklerinde PRIME Render Offload ile otomatik devreye girer. Maksimum pil ömrü ve serin çalışma sunar.")
+                            egui::RichText::new(hybrid_desc)
                                 .font(FontId::new(11.0, FontFamily::Proportional))
                                 .color(TEXT_MUTED),
                         );
                     });
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let btn_label = if !is_discrete {
+                            if self.language.is_tr() { "● Aktif" } else { "● Active" }
+                        } else {
+                            if self.language.is_tr() { "Hybrid Seç" } else { "Select Hybrid" }
+                        };
                         let btn = ui.add(
-                            egui::Button::new(egui::RichText::new(if !is_discrete { "● Active" } else { "Select Hybrid" }).font(FontId::new(12.0, FontFamily::Proportional)).color(if !is_discrete { COLOR_BALANCED } else { TEXT_PRIMARY }))
+                            egui::Button::new(egui::RichText::new(btn_label).font(FontId::new(12.0, FontFamily::Proportional)).color(if !is_discrete { COLOR_BALANCED } else { TEXT_PRIMARY }))
                                 .fill(if !is_discrete { PILL_ACTIVE } else { PILL_BG })
                                 .stroke(Stroke::new(1.0, if !is_discrete { COLOR_BALANCED } else { LINE_BORDER }))
                                 .rounding(Rounding::same(4.0))
@@ -1410,16 +1487,26 @@ impl LightOmenApp {
                         ui.label(egui::RichText::new("Discrete Mode (Direct dGPU)").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY).strong());
                         ui.add_space(2.0);
                         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                        let discrete_desc = if self.language.is_tr() {
+                            "Dahili ekran doğrudan NVIDIA GeForce RTX 4050 dGPU'ya bağlanır. Optimus köprüsü devre dışı kalarak en yüksek FPS, en düşük giriş gecikmesi ve tam G-Sync desteği sağlanır."
+                        } else {
+                            "Internal display connects directly to NVIDIA GeForce RTX 4050 dGPU. Completely bypasses the Optimus bridge for maximum gaming FPS, lowest latency, and full G-Sync support."
+                        };
                         ui.label(
-                            egui::RichText::new("Dahili ekran doğrudan NVIDIA GeForce RTX 4050 dGPU'ya bağlanır. Optimus köprüsü devre dışı kalarak en yüksek FPS, en düşük giriş gecikmesi ve tam G-Sync desteği sağlanır.")
+                            egui::RichText::new(discrete_desc)
                                 .font(FontId::new(11.0, FontFamily::Proportional))
                                 .color(TEXT_MUTED),
                         );
                     });
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let btn_label = if is_discrete {
+                            if self.language.is_tr() { "● Aktif" } else { "● Active" }
+                        } else {
+                            if self.language.is_tr() { "Discrete Seç" } else { "Select Discrete" }
+                        };
                         let btn = ui.add(
-                            egui::Button::new(egui::RichText::new(if is_discrete { "● Active" } else { "Select Discrete" }).font(FontId::new(12.0, FontFamily::Proportional)).color(if is_discrete { COLOR_PERF } else { TEXT_PRIMARY }))
+                            egui::Button::new(egui::RichText::new(btn_label).font(FontId::new(12.0, FontFamily::Proportional)).color(if is_discrete { COLOR_PERF } else { TEXT_PRIMARY }))
                                 .fill(if is_discrete { PILL_ACTIVE } else { PILL_BG })
                                 .stroke(Stroke::new(1.0, if is_discrete { COLOR_PERF } else { LINE_BORDER }))
                                 .rounding(Rounding::same(4.0))
@@ -1446,18 +1533,29 @@ impl LightOmenApp {
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
                         ui.set_width(avail_w - 130.0);
-                        ui.label(egui::RichText::new("Donanım MUX Geçişi ve Yeniden Başlatma").font(FontId::new(12.5, FontFamily::Proportional)).color(TEXT_PRIMARY));
+                        let reboot_title = if self.language.is_tr() {
+                            "Donanım MUX Geçişi ve Yeniden Başlatma"
+                        } else {
+                            "Hardware MUX Switch Reboot Required"
+                        };
+                        ui.label(egui::RichText::new(reboot_title).font(FontId::new(12.5, FontFamily::Proportional)).color(TEXT_PRIMARY));
                         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                        let reboot_desc = if self.language.is_tr() {
+                            "Donanım seviyesindeki MUX anahtarı BIOS tarafından bilgisayar açılırken uygulanır. Değişikliğin tam olarak geçerli olması için sistemi yeniden başlatmanız gerekir."
+                        } else {
+                            "The hardware-level MUX switch is applied by the BIOS during system boot. You must reboot your computer for the switch to take full physical effect."
+                        };
                         ui.label(
-                            egui::RichText::new("Donanım seviyesindeki MUX anahtarı BIOS tarafından bilgisayar açılırken uygulanır. Değişikliğin tam olarak geçerli olması için sistemi yeniden başlatmanız gerekir.")
+                            egui::RichText::new(reboot_desc)
                                 .font(FontId::new(11.0, FontFamily::Proportional))
                                 .color(TEXT_MUTED),
                         );
                     });
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let restart_label = if self.language.is_tr() { "🔄 Şimdi Yeniden Başlat" } else { "🔄 Restart Now" };
                         let restart_btn = ui.add(
-                            egui::Button::new(egui::RichText::new("🔄 Restart Now").font(FontId::new(12.0, FontFamily::Proportional)).color(COLOR_WARN))
+                            egui::Button::new(egui::RichText::new(restart_label).font(FontId::new(12.0, FontFamily::Proportional)).color(COLOR_WARN))
                                 .fill(PILL_BG)
                                 .stroke(Stroke::new(1.0, COLOR_WARN))
                                 .rounding(Rounding::same(4.0))
@@ -1478,7 +1576,8 @@ impl LightOmenApp {
         }
         let specs = self.specs.as_ref().unwrap();
 
-        ui.label(egui::RichText::new("SYSTEM SPECIFICATIONS").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_HI).strong());
+        let sys_title = if self.language.is_tr() { "SİSTEM ÖZELLİKLERİ" } else { "SYSTEM SPECIFICATIONS" };
+        ui.label(egui::RichText::new(sys_title).font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_HI).strong());
         ui.add_space(6.0);
 
         // Hardware Specs Card
@@ -1489,7 +1588,8 @@ impl LightOmenApp {
             .inner_margin(14.0)
             .show(ui, |ui| {
                 // Active Display Renderer badge
-                ui.label(egui::RichText::new("ACTIVE DISPLAY RENDERER").font(FontId::new(10.5, FontFamily::Proportional)).color(TEXT_DIM));
+                let ren_title = if self.language.is_tr() { "AKTİF EKRAN İŞLEMCİSİ" } else { "ACTIVE DISPLAY RENDERER" };
+                ui.label(egui::RichText::new(ren_title).font(FontId::new(10.5, FontFamily::Proportional)).color(TEXT_DIM));
                 ui.add_space(2.0);
                 egui::Frame::none()
                     .fill(PILL_BG)
@@ -1505,40 +1605,117 @@ impl LightOmenApp {
                 ui.add_space(10.0);
 
                 // CPU
-                render_spec_row(ui, "Processor (CPU)", &specs.cpu_model);
+                let cpu_label = if self.language.is_tr() { "İşlemci (CPU)" } else { "Processor (CPU)" };
+                render_spec_row(ui, cpu_label, &specs.cpu_model);
                 ui.add_space(6.0);
 
                 // Dedicated GPU
-                render_spec_row(ui, "Discrete GPU (dGPU)", &specs.gpu_dgpu);
+                let dgpu_label = if self.language.is_tr() { "Harici Ekran Kartı (dGPU)" } else { "Discrete GPU (dGPU)" };
+                render_spec_row(ui, dgpu_label, &specs.gpu_dgpu);
                 ui.add_space(6.0);
 
                 // Integrated GPU
-                render_spec_row(ui, "Integrated GPU (iGPU)", &specs.gpu_igpu);
+                let igpu_label = if self.language.is_tr() { "Dahili Grafik Kartı (iGPU)" } else { "Integrated GPU (iGPU)" };
+                render_spec_row(ui, igpu_label, &specs.gpu_igpu);
                 ui.add_space(6.0);
 
                 // RAM
-                render_spec_row(ui, "System Memory (RAM)", &format!("{} GB Physical Memory", specs.total_ram_gb));
+                let ram_label = if self.language.is_tr() { "Sistem Belleği (RAM)" } else { "System Memory (RAM)" };
+                let ram_val = if self.language.is_tr() {
+                    format!("{} GB Fiziksel Bellek", specs.total_ram_gb)
+                } else {
+                    format!("{} GB Physical Memory", specs.total_ram_gb)
+                };
+                render_spec_row(ui, ram_label, &ram_val);
                 ui.add_space(6.0);
 
                 // Motherboard
-                render_spec_row(ui, "Motherboard Model", "HP Victus 16-s0xxx (Board ID: 8BD4)");
+                let mb_label = if self.language.is_tr() { "Anakart Modeli" } else { "Motherboard Model" };
+                render_spec_row(ui, mb_label, "HP Victus 16-s0xxx (Board ID: 8BD4)");
                 ui.add_space(6.0);
 
                 // Kernel & Drivers
-                render_spec_row(ui, "Operating Kernel", &specs.kernel_version);
+                let kernel_label = if self.language.is_tr() { "Linux Çekirdeği" } else { "Operating Kernel" };
+                render_spec_row(ui, kernel_label, &specs.kernel_version);
                 ui.add_space(6.0);
-                render_spec_row(ui, "NVIDIA Kernel Driver", &specs.nvidia_driver);
+
+                let drv_label = if self.language.is_tr() { "NVIDIA Çekirdek Sürücüsü" } else { "NVIDIA Kernel Driver" };
+                render_spec_row(ui, drv_label, &specs.nvidia_driver);
             });
     }
 
     /// Tab 4: Settings (OMEN Key Learn default 149, Autostart, Probe Interval, Reset Defaults)
     fn render_settings_tab(&mut self, ui: &mut Ui, accent: Color32) {
-        ui.label(egui::RichText::new("SETTINGS & OMEN KEY").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_HI).strong());
+        let tab_title = if self.language.is_tr() { "AYARLAR VE OMEN TUŞU" } else { "SETTINGS & OMEN KEY" };
+        ui.label(egui::RichText::new(tab_title).font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_HI).strong());
         ui.add_space(6.0);
 
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
+                // 0. APPLICATION LANGUAGE
+                egui::Frame::none()
+                    .fill(CARD_BG)
+                    .stroke(Stroke::new(1.0, LINE_BORDER))
+                    .rounding(Rounding::same(8.0))
+                    .inner_margin(14.0)
+                    .show(ui, |ui| {
+                        let lang_sec_hdr = if self.language.is_tr() { "UYGULAMA DİLİ" } else { "APPLICATION LANGUAGE" };
+                        ui.label(egui::RichText::new(lang_sec_hdr).font(FontId::new(10.5, FontFamily::Proportional)).color(TEXT_DIM));
+                        ui.add_space(4.0);
+
+                        ui.horizontal(|ui| {
+                            ui.vertical(|ui| {
+                                let lang_title = if self.language.is_tr() { "Arayüz Dili" } else { "Interface Language" };
+                                let lang_desc = if self.language.is_tr() { "Uygulama dilini Türkçe veya İngilizce olarak seçin." } else { "Choose Turkish or English interface language." };
+                                ui.label(egui::RichText::new(lang_title).font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
+                                ui.label(egui::RichText::new(lang_desc).font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
+                            });
+
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                // English button
+                                let is_en = !self.language.is_tr();
+                                let en_btn = ui.add(
+                                    egui::Button::new(
+                                        egui::RichText::new("🇬🇧 English")
+                                            .font(FontId::new(12.0, FontFamily::Proportional))
+                                            .color(if is_en { accent } else { TEXT_PRIMARY }),
+                                    )
+                                    .fill(if is_en { PILL_ACTIVE } else { PILL_BG })
+                                    .stroke(Stroke::new(1.0, if is_en { accent } else { LINE_BORDER }))
+                                    .rounding(Rounding::same(4.0))
+                                    .min_size(Vec2::new(95.0, 30.0)),
+                                );
+                                if en_btn.clicked() && is_en == false {
+                                    self.language = Language::En;
+                                    self.language.save();
+                                }
+
+                                ui.add_space(6.0);
+
+                                // Turkish button
+                                let is_tr = self.language.is_tr();
+                                let tr_btn = ui.add(
+                                    egui::Button::new(
+                                        egui::RichText::new("🇹🇷 Türkçe")
+                                            .font(FontId::new(12.0, FontFamily::Proportional))
+                                            .color(if is_tr { accent } else { TEXT_PRIMARY }),
+                                    )
+                                    .fill(if is_tr { PILL_ACTIVE } else { PILL_BG })
+                                    .stroke(Stroke::new(1.0, if is_tr { accent } else { LINE_BORDER }))
+                                    .rounding(Rounding::same(4.0))
+                                    .min_size(Vec2::new(95.0, 30.0)),
+                                );
+                                if tr_btn.clicked() && is_tr == false {
+                                    self.language = Language::Tr;
+                                    self.language.save();
+                                }
+                            });
+                        });
+                    });
+
+                ui.add_space(8.0);
+
                 // 1. OMEN KEY LEARNING
                 egui::Frame::none()
                     .fill(CARD_BG)
@@ -1546,7 +1723,8 @@ impl LightOmenApp {
                     .rounding(Rounding::same(8.0))
                     .inner_margin(14.0)
                     .show(ui, |ui| {
-                        ui.label(egui::RichText::new("OMEN KEY LEARNING").font(FontId::new(10.5, FontFamily::Proportional)).color(TEXT_DIM));
+                        let omen_hdr = if self.language.is_tr() { "OMEN TUŞU TANIMLAMA" } else { "OMEN KEY LEARNING" };
+                        ui.label(egui::RichText::new(omen_hdr).font(FontId::new(10.5, FontFamily::Proportional)).color(TEXT_DIM));
                         ui.add_space(4.0);
 
                         let is_learning = self.status.is_learning_key == 1;
@@ -1559,10 +1737,16 @@ impl LightOmenApp {
                             if is_learning {
                                 let elapsed = self.learn_started_at.map_or(0, |t| t.elapsed().as_secs());
                                 let remain = 10u64.saturating_sub(elapsed);
-                                ui.label(egui::RichText::new(format!("Press your OMEN key now… ({} s)", remain)).font(FontId::new(13.0, FontFamily::Proportional)).color(COLOR_WARN).strong());
+                                let prompt_str = if self.language.is_tr() {
+                                    format!("OMEN tuşuna şimdi basın… ({} sn)", remain)
+                                } else {
+                                    format!("Press your OMEN key now… ({} s)", remain)
+                                };
+                                ui.label(egui::RichText::new(prompt_str).font(FontId::new(13.0, FontFamily::Proportional)).color(COLOR_WARN).strong());
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if ui.button("Cancel").clicked() {
+                                    let cancel_lbl = if self.language.is_tr() { "İptal" } else { "Cancel" };
+                                    if ui.button(cancel_lbl).clicked() {
                                         Self::send_ipc(CMD_CANCEL_KEY_LEARN, &[]);
                                         self.status.is_learning_key = 0;
                                         self.learn_started_at = None;
@@ -1570,16 +1754,28 @@ impl LightOmenApp {
                                 });
                             } else {
                                 let key_code = self.status.config.hotkey_code;
-                                let label_text = if key_code != 0 {
-                                    format!("OMEN Key: Keycode {} ({})", key_code, Self::keycode_display_name(key_code))
+                                let label_text = if self.language.is_tr() {
+                                    if key_code != 0 {
+                                        format!("OMEN Tuşu: Tuş Kodu {} ({})", key_code, Self::keycode_display_name(key_code))
+                                    } else {
+                                        "OMEN Tuşu: Tuş Kodu 149 (Varsayılan)".to_string()
+                                    }
                                 } else {
-                                    "OMEN Key: Keycode 149 (Default)".to_string()
+                                    if key_code != 0 {
+                                        format!("OMEN Key: Keycode {} ({})", key_code, Self::keycode_display_name(key_code))
+                                    } else {
+                                        "OMEN Key: Keycode 149 (Default)".to_string()
+                                    }
                                 };
 
                                 ui.label(egui::RichText::new(label_text).font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    let btn_label = if key_code != 0 { "Relearn" } else { "Learn" };
+                                    let btn_label = if self.language.is_tr() {
+                                        if key_code != 0 { "Yeniden Tanıt" } else { "Tanıt" }
+                                    } else {
+                                        if key_code != 0 { "Relearn" } else { "Learn" }
+                                    };
                                     let learn_btn = ui.add(
                                         egui::Button::new(egui::RichText::new(btn_label).font(FontId::new(12.0, FontFamily::Proportional)).color(accent))
                                             .fill(PILL_BG)
@@ -1597,7 +1793,12 @@ impl LightOmenApp {
                         });
 
                         ui.add_space(4.0);
-                        ui.label(egui::RichText::new("Binds the physical OMEN hotkey to summon or hide the window on Wayland (Default: 149).").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
+                        let omen_sub = if self.language.is_tr() {
+                            "Fiziksel OMEN tuşunu Wayland üzerinde pencereyi açıp kapatmak üzere eşler (Varsayılan: 149)."
+                        } else {
+                            "Binds the physical OMEN hotkey to summon or hide the window on Wayland (Default: 149)."
+                        };
+                        ui.label(egui::RichText::new(omen_sub).font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
                     });
 
                 ui.add_space(8.0);
@@ -1609,14 +1810,17 @@ impl LightOmenApp {
                     .rounding(Rounding::same(8.0))
                     .inner_margin(14.0)
                     .show(ui, |ui| {
-                        ui.label(egui::RichText::new("AUTOMATION & SENSORS").font(FontId::new(10.5, FontFamily::Proportional)).color(TEXT_DIM));
+                        let auto_hdr = if self.language.is_tr() { "OTOMASYON VE SENSÖRLER" } else { "AUTOMATION & SENSORS" };
+                        ui.label(egui::RichText::new(auto_hdr).font(FontId::new(10.5, FontFamily::Proportional)).color(TEXT_DIM));
                         ui.add_space(4.0);
 
                         // Autostart
                         ui.horizontal(|ui| {
                             ui.vertical(|ui| {
-                                ui.label(egui::RichText::new("Start at Login (LightOmen Tray)").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
-                                ui.label(egui::RichText::new("Launch lightomen-tray automatically on user login.").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
+                                let autostart_title = if self.language.is_tr() { "Açılışta Başlat (LightOmen Sistem Tepsisi)" } else { "Start at Login (LightOmen Tray)" };
+                                let autostart_desc = if self.language.is_tr() { "Kullanıcı oturumu açıldığında lightomen-tray uygulamasını otomatik başlatır." } else { "Launch lightomen-tray automatically on user login." };
+                                ui.label(egui::RichText::new(autostart_title).font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
+                                ui.label(egui::RichText::new(autostart_desc).font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
                             });
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1636,8 +1840,10 @@ impl LightOmenApp {
                         // Probe interval
                         ui.horizontal(|ui| {
                             ui.vertical(|ui| {
-                                ui.label(egui::RichText::new("Hardware Probe Interval").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
-                                ui.label(egui::RichText::new("Sensor refresh rate (0.5s to 3.0s).").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
+                                let probe_title = if self.language.is_tr() { "Donanım Algılama Aralığı" } else { "Hardware Probe Interval" };
+                                let probe_desc = if self.language.is_tr() { "Sensör güncelleme periyodu (0.5 sn - 3.0 sn)." } else { "Sensor refresh rate (0.5s to 3.0s)." };
+                                ui.label(egui::RichText::new(probe_title).font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
+                                ui.label(egui::RichText::new(probe_desc).font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
                             });
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1661,8 +1867,14 @@ impl LightOmenApp {
                         // Zero-RPM GPU Fan on Battery
                         ui.horizontal(|ui| {
                             ui.vertical(|ui| {
-                                ui.label(egui::RichText::new("Zero-RPM GPU Fan on Battery").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
-                                ui.label(egui::RichText::new("Stop GPU fan (0 RPM) when running on battery and NVIDIA is in D3cold sleep. Ramps up if CPU reaches 75°C.").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
+                                let zero_title = if self.language.is_tr() { "Bataryada Sıfır RPM GPU Fanı" } else { "Zero-RPM GPU Fan on Battery" };
+                                let zero_desc = if self.language.is_tr() {
+                                    "Bataryada iken ve NVIDIA D3cold uyku modundayken GPU fanını durdurur (0 RPM). CPU 75°C'ye ulaşırsa fanı otomatik çalıştırır."
+                                } else {
+                                    "Stop GPU fan (0 RPM) when running on battery and NVIDIA is in D3cold sleep. Ramps up if CPU reaches 75°C."
+                                };
+                                ui.label(egui::RichText::new(zero_title).font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
+                                ui.label(egui::RichText::new(zero_desc).font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
                             });
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1681,8 +1893,14 @@ impl LightOmenApp {
                         // Auto Eco on Battery
                         ui.horizontal(|ui| {
                             ui.vertical(|ui| {
-                                ui.label(egui::RichText::new("Auto Eco Mode on Battery").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
-                                ui.label(egui::RichText::new("Automatically switch to Eco profile when unplugged, and restore previous profile on AC.").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
+                                let eco_title = if self.language.is_tr() { "Bataryada Otomatik Eco Modu" } else { "Auto Eco Mode on Battery" };
+                                let eco_desc = if self.language.is_tr() {
+                                    "Şarjdan çıkarıldığında otomatik Eco profiline geçer, şarja takıldığında önceki profile döner."
+                                } else {
+                                    "Automatically switch to Eco profile when unplugged, and restore previous profile on AC."
+                                };
+                                ui.label(egui::RichText::new(eco_title).font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
+                                ui.label(egui::RichText::new(eco_desc).font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
                             });
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1701,8 +1919,14 @@ impl LightOmenApp {
                         // Lowest Refresh Rate on Battery (60 Hz)
                         ui.horizontal(|ui| {
                             ui.vertical(|ui| {
-                                ui.label(egui::RichText::new("Lowest Refresh Rate on Battery (60 Hz)").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
-                                ui.label(egui::RichText::new("Automatically switch screen to 60 Hz on battery, restore maximum refresh rate (144 Hz) on AC.").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
+                                let low_title = if self.language.is_tr() { "Bataryada Düşük Yenileme Hızı (60 Hz)" } else { "Lowest Refresh Rate on Battery (60 Hz)" };
+                                let low_desc = if self.language.is_tr() {
+                                    "Bataryada iken ekranı 60 Hz'e düşürür, fişe takıldığında en yüksek yenileme hızına (144 Hz) geri alır."
+                                } else {
+                                    "Automatically switch screen to 60 Hz on battery, restore maximum refresh rate (144 Hz) on AC."
+                                };
+                                ui.label(egui::RichText::new(low_title).font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
+                                ui.label(egui::RichText::new(low_desc).font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
                             });
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1727,8 +1951,14 @@ impl LightOmenApp {
                         let disable_boost_global = !self.status.config.cpu_boost_enabled();
                         ui.horizontal(|ui| {
                             ui.vertical(|ui| {
-                                ui.label(egui::RichText::new("Disable CPU Turbo Boost").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
-                                ui.label(egui::RichText::new("Disable dynamic boost to 5.0 GHz across AC & Battery. Limits CPU clock to base frequency (~4.3 GHz), eliminating aggressive voltage spikes and dropping thermals by 10-15°C (Windows 95% processor state).").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
+                                let boost_title = if self.language.is_tr() { "CPU Turbo Boost'u Devre Dışı Bırak" } else { "Disable CPU Turbo Boost" };
+                                let boost_desc = if self.language.is_tr() {
+                                    "Hem şarjda hem bataryada 5.0 GHz turbo artışını kapatır. İşlemci saatini temel frekansta (~4.3 GHz) sınırlandırarak voltaj sıçramalarını ve sıcaklıkları 10-15°C düşürür (Windows %95 işlemci durumu gibi)."
+                                } else {
+                                    "Disable dynamic boost to 5.0 GHz across AC & Battery. Limits CPU clock to base frequency (~4.3 GHz), eliminating aggressive voltage spikes and dropping thermals by 10-15°C (Windows 95% processor state)."
+                                };
+                                ui.label(egui::RichText::new(boost_title).font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
+                                ui.label(egui::RichText::new(boost_desc).font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
                             });
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1750,11 +1980,20 @@ impl LightOmenApp {
                             ui.vertical(|ui| {
                                 let title_color = if !disable_boost_global { TEXT_PRIMARY } else { TEXT_DIM };
                                 let sub_color = if !disable_boost_global { TEXT_MUTED } else { TEXT_DIM };
-                                ui.label(egui::RichText::new("Disable Turbo Boost on Battery").font(FontId::new(13.0, FontFamily::Proportional)).color(title_color));
+                                let no_boost_title = if self.language.is_tr() { "Bataryada Turbo Boost'u Kapat" } else { "Disable Turbo Boost on Battery" };
+                                ui.label(egui::RichText::new(no_boost_title).font(FontId::new(13.0, FontFamily::Proportional)).color(title_color));
                                 let desc = if !disable_boost_global {
-                                    "Automatically disable CPU Turbo Boost when running on battery to prevent power spikes and maximize battery life."
+                                    if self.language.is_tr() {
+                                        "Bataryada çalışırken ani güç tüketimini önlemek ve pil ömrünü uzatmak için CPU Turbo Boost'u otomatik kapatır."
+                                    } else {
+                                        "Automatically disable CPU Turbo Boost when running on battery to prevent power spikes and maximize battery life."
+                                    }
                                 } else {
-                                    "Inactive: CPU Turbo Boost is already turned off globally across both AC and battery."
+                                    if self.language.is_tr() {
+                                        "Devre dışı: CPU Turbo Boost zaten tüm sistem genelinde kapatıldı."
+                                    } else {
+                                        "Inactive: CPU Turbo Boost is already turned off globally across both AC and battery."
+                                    }
                                 };
                                 ui.label(egui::RichText::new(desc).font(FontId::new(11.0, FontFamily::Proportional)).color(sub_color));
                             });
@@ -1781,10 +2020,12 @@ impl LightOmenApp {
                     .inner_margin(14.0)
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new("Reset Fan Curves & Settings").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
+                            let reset_title = if self.language.is_tr() { "Fan Grafikleri ve Ayarları Sıfırla" } else { "Reset Fan Curves & Settings" };
+                            ui.label(egui::RichText::new(reset_title).font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui.button("Reset Defaults").clicked() {
+                                let reset_btn_lbl = if self.language.is_tr() { "Varsayılana Sıfırla" } else { "Reset Defaults" };
+                                if ui.button(reset_btn_lbl).clicked() {
                                     self.status.config.cpu_curve = DEFAULT_CPU_CURVE;
                                     self.status.config.gpu_curve = DEFAULT_GPU_CURVE;
                                     self.status.config.probe_interval_ms = 2000;
@@ -1818,19 +2059,32 @@ impl LightOmenApp {
                     .rounding(Rounding::same(8.0))
                     .inner_margin(14.0)
                     .show(ui, |ui| {
-                        ui.label(egui::RichText::new("SYSTEM & HARDWARE DIAGNOSTICS").font(FontId::new(10.5, FontFamily::Proportional)).color(TEXT_DIM));
+                        let diag_sec_hdr = if self.language.is_tr() { "SİSTEM VE DONANIM TANILAMA" } else { "SYSTEM & HARDWARE DIAGNOSTICS" };
+                        ui.label(egui::RichText::new(diag_sec_hdr).font(FontId::new(10.5, FontFamily::Proportional)).color(TEXT_DIM));
                         ui.add_space(4.0);
 
                         ui.horizontal(|ui| {
                             ui.vertical(|ui| {
-                                ui.label(egui::RichText::new("Collect Diagnostics Report").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
-                                ui.label(egui::RichText::new("Inspect hp-wmi kernel driver, sysfs nodes, EC sensors, MUX status, and daemon logs in one click.").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
+                                let diag_title = if self.language.is_tr() { "Tanılama Raporu Topla" } else { "Collect Diagnostics Report" };
+                                let diag_desc = if self.language.is_tr() {
+                                    "hp-wmi çekirdek sürücüsü, sysfs düğümleri, EC sensörleri, MUX durumu ve daemon günlüklerini tek tıkla inceleyin."
+                                } else {
+                                    "Inspect hp-wmi kernel driver, sysfs nodes, EC sensors, MUX status, and daemon logs in one click."
+                                };
+                                ui.label(egui::RichText::new(diag_title).font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
+                                ui.label(egui::RichText::new(diag_desc).font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
                             });
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui.button("📋 Run Diagnostics").clicked() {
+                                let run_diag_lbl = if self.language.is_tr() { "📋 Tanılamayı Başlat" } else { "📋 Run Diagnostics" };
+                                if ui.button(run_diag_lbl).clicked() {
                                     self.diagnostic_report = Some(Self::collect_diagnostics());
-                                    self.diagnostic_status = Some("Diagnostics collected successfully!".to_string());
+                                    let success_msg = if self.language.is_tr() {
+                                        "Tanılama raporu başarıyla oluşturuldu!".to_string()
+                                    } else {
+                                        "Diagnostics collected successfully!".to_string()
+                                    };
+                                    self.diagnostic_status = Some(success_msg);
                                 }
                             });
                         });
@@ -1850,13 +2104,16 @@ impl LightOmenApp {
                                 }
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if ui.button("✕ Close").clicked() {
+                                    let close_lbl = if self.language.is_tr() { "✕ Kapat" } else { "✕ Close" };
+                                    if ui.button(close_lbl).clicked() {
                                         close_clicked = true;
                                     }
-                                    if ui.button("💾 Save to File").clicked() {
+                                    let save_lbl = if self.language.is_tr() { "💾 Dosyaya Kaydet" } else { "💾 Save to File" };
+                                    if ui.button(save_lbl).clicked() {
                                         save_clicked = true;
                                     }
-                                    if ui.button("📋 Copy to Clipboard").clicked() {
+                                    let copy_lbl = if self.language.is_tr() { "📋 Panoya Kopyala" } else { "📋 Copy to Clipboard" };
+                                    if ui.button(copy_lbl).clicked() {
                                         copy_clicked = true;
                                     }
                                 });
@@ -1867,12 +2124,22 @@ impl LightOmenApp {
                                 self.diagnostic_status = None;
                             } else if copy_clicked {
                                 ui.output_mut(|o| o.copied_text = report.clone());
-                                self.diagnostic_status = Some("Copied to clipboard!".to_string());
+                                let copied_msg = if self.language.is_tr() {
+                                    "Panoya kopyalandı!".to_string()
+                                } else {
+                                    "Copied to clipboard!".to_string()
+                                };
+                                self.diagnostic_status = Some(copied_msg);
                             } else if save_clicked {
                                 if let Some(home) = std::env::var_os("HOME") {
                                     let p = PathBuf::from(home).join("lightomen-diagnostics.txt");
                                     if fs::write(&p, &report).is_ok() {
-                                        self.diagnostic_status = Some(format!("Saved to {}", p.display()));
+                                        let saved_msg = if self.language.is_tr() {
+                                            format!("{} konumuna kaydedildi", p.display())
+                                        } else {
+                                            format!("Saved to {}", p.display())
+                                        };
+                                        self.diagnostic_status = Some(saved_msg);
                                     }
                                 }
                             }

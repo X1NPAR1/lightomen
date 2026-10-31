@@ -2,7 +2,9 @@
 // Uses ksni (StatusNotifierItem) for native Wayland / X11 tray support.
 
 mod icon_data;
+mod i18n;
 
+use i18n::Language;
 use ksni::{menu::*, MenuItem, Status, ToolTip, Tray, TrayService};
 use lightomen_common::{
     DaemonStatus, IpcMessage, ALT_SOCKET_PATH, CMD_GET_STATUS, CMD_SET_FAN_MODE,
@@ -132,25 +134,52 @@ impl Tray for LightOmenTray {
     }
 
     fn title(&self) -> String {
-        let pwr = if self.on_battery == 1 { format!(" (Bat {}%)", self.battery_pct) } else { "".to_string() };
+        let lang = Language::load();
+        let pwr = if self.on_battery == 1 {
+            if lang.is_tr() { format!(" (Batarya %{})", self.battery_pct) } else { format!(" (Bat {}%)", self.battery_pct) }
+        } else {
+            "".to_string()
+        };
+        let sleep_txt = if lang.is_tr() { "Uyku" } else { "Sleep" };
         if self.gpu_temp == 0 {
-            format!("LightOmen: CPU {}°C | GPU Sleep{}", self.cpu_temp, pwr)
+            format!("LightOmen: CPU {}°C | GPU {}{}", self.cpu_temp, sleep_txt, pwr)
         } else {
             format!("LightOmen: CPU {}°C | GPU {}°C{}", self.cpu_temp, self.gpu_temp, pwr)
         }
     }
 
     fn tool_tip(&self) -> ToolTip {
+        let lang = Language::load();
         let gpu_str = if self.gpu_temp == 0 {
-            "Sleep (D3cold · 0 W)".to_string()
+            if lang.is_tr() { "Uyku (D3cold · 0 W)".to_string() } else { "Sleep (D3cold · 0 W)".to_string() }
         } else {
             format!("{}°C", self.gpu_temp)
         };
-        let pwr_str = if self.on_battery == 1 { format!("Battery ({}%)", self.battery_pct) } else { "AC Online".to_string() };
+        let pwr_str = if self.on_battery == 1 {
+            if lang.is_tr() { format!("Batarya (%{})", self.battery_pct) } else { format!("Battery ({}%)", self.battery_pct) }
+        } else {
+            if lang.is_tr() { "AC Bağlı".to_string() } else { "AC Online".to_string() }
+        };
 
-        ToolTip {
-            title: "LightOmen Linux".into(),
-            description: format!(
+        let desc = if lang.is_tr() {
+            format!(
+                "CPU: {}°C | GPU: {}\nGüç: {}\nProfil: {}\nFan Modu: {}",
+                self.cpu_temp,
+                gpu_str,
+                pwr_str,
+                match self.power_profile {
+                    0 => "Eco",
+                    1 => "Balanced",
+                    _ => "Performance",
+                },
+                match self.fan_mode {
+                    0 => "Auto",
+                    1 => "Max",
+                    _ => "Grafik",
+                }
+            )
+        } else {
+            format!(
                 "CPU: {}°C | GPU: {}\nPower: {}\nProfile: {}\nFan Mode: {}",
                 self.cpu_temp,
                 gpu_str,
@@ -165,7 +194,12 @@ impl Tray for LightOmenTray {
                     1 => "Max",
                     _ => "Curve",
                 }
-            ),
+            )
+        };
+
+        ToolTip {
+            title: "LightOmen Linux".into(),
+            description: desc,
             icon_name: "lightomen".into(),
             icon_pixmap: vec![ksni::Icon {
                 width: 32,
@@ -184,12 +218,19 @@ impl Tray for LightOmenTray {
     }
 
     fn menu(&self) -> Vec<MenuItem<Self>> {
+        let lang = Language::load();
         let cur_power = self.power_profile;
         let cur_fan = self.fan_mode;
 
+        let open_label = if lang.is_tr() { "LightOmen'i Aç" } else { "Open LightOmen" };
+        let power_label = if lang.is_tr() { "Güç Profili" } else { "Power Profile" };
+        let fan_label = if lang.is_tr() { "Fan Modu" } else { "Fan Mode" };
+        let curve_label = if lang.is_tr() { "Grafik" } else { "Curve" };
+        let quit_label = if lang.is_tr() { "Tepsiden Çıkış" } else { "Quit Tray" };
+
         vec![
             StandardItem {
-                label: "Open LightOmen".into(),
+                label: open_label.into(),
                 activate: Box::new(|_| {
                     LightOmenTray::show_or_focus_gui();
                 }),
@@ -198,7 +239,7 @@ impl Tray for LightOmenTray {
             .into(),
             MenuItem::Separator,
             SubMenu {
-                label: "Power Profile".into(),
+                label: power_label.into(),
                 submenu: vec![
                     CheckmarkItem {
                         label: "Eco".into(),
@@ -235,7 +276,7 @@ impl Tray for LightOmenTray {
             }
             .into(),
             SubMenu {
-                label: "Fan Mode".into(),
+                label: fan_label.into(),
                 submenu: vec![
                     CheckmarkItem {
                         label: "Auto".into(),
@@ -258,7 +299,7 @@ impl Tray for LightOmenTray {
                     }
                     .into(),
                     CheckmarkItem {
-                        label: "Curve".into(),
+                        label: curve_label.into(),
                         checked: cur_fan == FAN_MODE_CURVE,
                         activate: Box::new(|tray: &mut Self| {
                             tray.fan_mode = FAN_MODE_CURVE;
@@ -273,7 +314,7 @@ impl Tray for LightOmenTray {
             .into(),
             MenuItem::Separator,
             StandardItem {
-                label: "Quit Tray".into(),
+                label: quit_label.into(),
                 activate: Box::new(|_| {
                     std::process::exit(0);
                 }),
