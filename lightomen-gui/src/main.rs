@@ -24,7 +24,7 @@ use lightomen_common::{
 use std::fs;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
@@ -165,6 +165,8 @@ struct LightOmenApp {
     needs_focus: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ctx_holder: std::sync::Arc<std::sync::Mutex<Option<egui::Context>>>,
     reset_window_level_at: Option<Instant>,
+    diagnostic_report: Option<String>,
+    diagnostic_status: Option<String>,
 }
 
 impl LightOmenApp {
@@ -189,6 +191,8 @@ impl LightOmenApp {
             needs_focus,
             ctx_holder,
             reset_window_level_at: None,
+            diagnostic_report: None,
+            diagnostic_status: None,
         }
     }
 
@@ -387,6 +391,122 @@ impl LightOmenApp {
         let _ = Command::new("wmctrl")
             .args(["-x", "-a", "lightomen"])
             .spawn();
+    }
+
+    /// Collects hardware, kernel driver, sysfs, and daemon diagnostic information
+    pub fn collect_diagnostics() -> String {
+        let mut out = String::new();
+        out.push_str("====================================================\n");
+        out.push_str("       LIGHTOMEN SYSTEM & HARDWARE DIAGNOSTICS      \n");
+        out.push_str("====================================================\n\n");
+
+        // 1. Board & DMI
+        out.push_str("[1] DMI & Hardware Platform:\n");
+        for (path, name) in [
+            ("/sys/class/dmi/id/board_name", "Board Name"),
+            ("/sys/class/dmi/id/product_name", "Product Name"),
+            ("/sys/class/dmi/id/bios_version", "BIOS Version"),
+            ("/sys/class/dmi/id/sys_vendor", "Vendor"),
+        ] {
+            let val = fs::read_to_string(path).unwrap_or_else(|_| "N/A".to_string());
+            out.push_str(&format!("  • {}: {}\n", name, val.trim()));
+        }
+
+        // 2. Kernel & Drivers
+        out.push_str("\n[2] Kernel & Drivers:\n");
+        let kver = fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_else(|_| "Unknown".to_string());
+        out.push_str(&format!("  • Kernel Release: {}\n", kver.trim()));
+
+        let hpwmi_path = Command::new("sh")
+            .arg("-c")
+            .arg("export PATH=/usr/sbin:/sbin:$PATH; modinfo -F filename hp_wmi 2>/dev/null || echo 'not found'")
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_else(|_| "error".to_string());
+        out.push_str(&format!("  • hp_wmi module path: {}\n", hpwmi_path));
+
+        let hpomen_path = Command::new("sh")
+            .arg("-c")
+            .arg("export PATH=/usr/sbin:/sbin:$PATH; modinfo -F filename hp_omen_extra 2>/dev/null || echo 'not found'")
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_else(|_| "error".to_string());
+        out.push_str(&format!("  • hp_omen_extra path: {}\n", hpomen_path));
+
+        let lsmod_out = Command::new("sh")
+            .arg("-c")
+            .arg("lsmod | grep -E 'hp_wmi|hp_omen_extra' || echo 'none loaded'")
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_else(|_| "error".to_string());
+        out.push_str(&format!("  • Active modules: {}\n", lsmod_out.replace('\n', " | ")));
+
+        let dkms_out = Command::new("sh")
+            .arg("-c")
+            .arg("export PATH=/usr/sbin:/sbin:$PATH; dkms status 2>/dev/null || echo 'dkms not available'")
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_else(|_| "error".to_string());
+        out.push_str(&format!("  • DKMS status: {}\n", dkms_out.replace('\n', " | ")));
+
+        // 3. Hwmon Fan & Power Sysfs
+        out.push_str("\n[3] Hwmon & ACPI Sysfs Status:\n");
+        for (path, name) in [
+            ("/sys/firmware/acpi/platform_profile", "platform_profile"),
+            ("/sys/firmware/acpi/platform_profile_choices", "platform_profile_choices"),
+            ("/sys/devices/platform/hp-wmi/gpu_mux_mode", "gpu_mux_mode"),
+            ("/sys/devices/platform/hp-wmi/graphics_mode", "graphics_mode"),
+            ("/sys/devices/platform/hp-wmi/gpu_tgp", "gpu_tgp"),
+            ("/sys/devices/platform/hp-wmi/gpu_ppab", "gpu_ppab"),
+        ] {
+            if Path::new(path).exists() {
+                let val = fs::read_to_string(path).unwrap_or_else(|_| "error".to_string());
+                out.push_str(&format!("  • {}: {}\n", name, val.trim()));
+            }
+        }
+
+        // Search hwmon nodes under hp-wmi
+        if let Ok(entries) = fs::read_dir("/sys/devices/platform/hp-wmi/hwmon") {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                for node in ["pwm1_enable", "fan1_target", "fan2_target", "fan1_input", "fan2_input", "fan1_max", "pwm1"] {
+                    let np = p.join(node);
+                    if np.exists() {
+                        let val = fs::read_to_string(&np).unwrap_or_else(|_| "err".to_string());
+                        out.push_str(&format!("  • hwmon/{}: {}\n", node, val.trim()));
+                    }
+                }
+            }
+        }
+
+        // 4. Daemon IPC & Telemetry
+        out.push_str("\n[4] Daemon IPC Status:\n");
+        let sock_exists = Path::new(SOCKET_PATH).exists();
+        out.push_str(&format!("  • Socket {} exists: {}\n", SOCKET_PATH, sock_exists));
+        if let Some(status) = Self::fetch_daemon_status() {
+            out.push_str(&format!("  • Telemetry: CPU {}°C | GPU {}°C | Fan1: {} RPM | Fan2: {} RPM\n",
+                status.telemetry.cpu_temp, status.telemetry.gpu_temp, status.telemetry.fan1_rpm, status.telemetry.fan2_rpm));
+            out.push_str(&format!("  • Power State: CPU {} mW | GPU {} mW | On Battery: {}\n",
+                status.telemetry.cpu_power_mw, status.telemetry.gpu_power_mw, status.on_battery == 1));
+            out.push_str(&format!("  • Config: FanMode={} (0=Auto, 1=Max, 2=Curve), Profile={}, MUX={}\n",
+                status.config.fan_mode, status.config.power_profile, status.config.mux_mode));
+            out.push_str(&format!("  • CPU Fan Curve: {:?}\n", status.config.cpu_curve));
+            out.push_str(&format!("  • GPU Fan Curve: {:?}\n", status.config.gpu_curve));
+        } else {
+            out.push_str("  • Could not connect to daemon IPC socket.\n");
+        }
+
+        // 5. Recent Systemd Journal
+        out.push_str("\n[5] Recent Daemon Logs (journalctl -u lightomen-daemon -n 25):\n");
+        let journal_out = Command::new("journalctl")
+            .args(["-u", "lightomen-daemon.service", "--no-pager", "-n", "25"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_else(|_| "journalctl not available".to_string());
+        out.push_str(&journal_out);
+        out.push_str("\n\n====================================================\n");
+
+        out
     }
 }
 
@@ -1687,6 +1807,94 @@ impl LightOmenApp {
                                 }
                             });
                         });
+                    });
+
+                ui.add_space(8.0);
+
+                // 4. HARDWARE & DRIVER DIAGNOSTICS (OmenSpace / Diagnostic Report)
+                egui::Frame::none()
+                    .fill(CARD_BG)
+                    .stroke(Stroke::new(1.0, LINE_BORDER))
+                    .rounding(Rounding::same(8.0))
+                    .inner_margin(14.0)
+                    .show(ui, |ui| {
+                        ui.label(egui::RichText::new("SYSTEM & HARDWARE DIAGNOSTICS").font(FontId::new(10.5, FontFamily::Proportional)).color(TEXT_DIM));
+                        ui.add_space(4.0);
+
+                        ui.horizontal(|ui| {
+                            ui.vertical(|ui| {
+                                ui.label(egui::RichText::new("Collect Diagnostics Report").font(FontId::new(13.0, FontFamily::Proportional)).color(TEXT_PRIMARY));
+                                ui.label(egui::RichText::new("Inspect hp-wmi kernel driver, sysfs nodes, EC sensors, MUX status, and daemon logs in one click.").font(FontId::new(11.0, FontFamily::Proportional)).color(TEXT_MUTED));
+                            });
+
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.button("📋 Run Diagnostics").clicked() {
+                                    self.diagnostic_report = Some(Self::collect_diagnostics());
+                                    self.diagnostic_status = Some("Diagnostics collected successfully!".to_string());
+                                }
+                            });
+                        });
+
+                        if let Some(report) = self.diagnostic_report.clone() {
+                            ui.add_space(10.0);
+                            ui.separator();
+                            ui.add_space(6.0);
+
+                            let mut close_clicked = false;
+                            let mut copy_clicked = false;
+                            let mut save_clicked = false;
+
+                            ui.horizontal(|ui| {
+                                if let Some(ref st) = self.diagnostic_status {
+                                    ui.label(egui::RichText::new(st).font(FontId::new(11.0, FontFamily::Proportional)).color(COLOR_OK));
+                                }
+
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.button("✕ Close").clicked() {
+                                        close_clicked = true;
+                                    }
+                                    if ui.button("💾 Save to File").clicked() {
+                                        save_clicked = true;
+                                    }
+                                    if ui.button("📋 Copy to Clipboard").clicked() {
+                                        copy_clicked = true;
+                                    }
+                                });
+                            });
+
+                            if close_clicked {
+                                self.diagnostic_report = None;
+                                self.diagnostic_status = None;
+                            } else if copy_clicked {
+                                ui.output_mut(|o| o.copied_text = report.clone());
+                                self.diagnostic_status = Some("Copied to clipboard!".to_string());
+                            } else if save_clicked {
+                                if let Some(home) = std::env::var_os("HOME") {
+                                    let p = PathBuf::from(home).join("lightomen-diagnostics.txt");
+                                    if fs::write(&p, &report).is_ok() {
+                                        self.diagnostic_status = Some(format!("Saved to {}", p.display()));
+                                    }
+                                }
+                            }
+
+                            if self.diagnostic_report.is_some() {
+                                ui.add_space(6.0);
+                                egui::ScrollArea::vertical()
+                                    .max_height(220.0)
+                                    .auto_shrink([false, false])
+                                    .show(ui, |ui| {
+                                        let mut text_slice = report.as_str();
+                                        ui.add(
+                                            egui::TextEdit::multiline(&mut text_slice)
+                                                .font(FontId::new(10.5, FontFamily::Monospace))
+                                                .text_color(TEXT_HI)
+                                                .desired_rows(12)
+                                                .desired_width(f32::INFINITY)
+                                                .lock_focus(true)
+                                        );
+                                    });
+                            }
+                        }
                     });
             });
     }

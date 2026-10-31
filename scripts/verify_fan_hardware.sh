@@ -84,9 +84,7 @@ else
     exit 1
 fi
 
-echo "  Executing EC unlatch recovery: 2 -> 50ms -> 1 -> target 1500 RPM..."
-echo 2 > "$HP_HWMON/pwm1_enable"
-sleep 0.05
+echo "  Executing direct MAX to Manual unlatch (1 > pwm1_enable, targets = 1500 RPM)..."
 echo 1 > "$HP_HWMON/pwm1_enable"
 echo 1500 > "$HP_HWMON/fan1_target"
 echo 1500 > "$HP_HWMON/fan2_target"
@@ -94,9 +92,23 @@ sleep 4
 STATUS_RECOVER=$(read_fans)
 echo "  Recovered State: $STATUS_RECOVER"
 if [[ "$STATUS_RECOVER" =~ "pwm1_enable: 1" ]]; then
-    echo "  [OK] EC successfully unlatched from MAX mode back to Manual 1500 RPM!"
+    echo "  [OK] EC successfully unlatched from MAX mode directly back to Manual 1500 RPM!"
 else
-    echo "  [FAIL] EC recovery sequence failed!"
+    echo "  [FAIL] Direct EC recovery sequence failed!"
+    exit 1
+fi
+
+echo "  Testing MAX to AUTO transition without 0-RPM fan lockup..."
+echo 0 > "$HP_HWMON/pwm1_enable"
+sleep 2
+echo 2 > "$HP_HWMON/pwm1_enable"
+sleep 2
+STATUS_AUTO=$(read_fans)
+echo "  AUTO State: $STATUS_AUTO"
+if [[ "$STATUS_AUTO" =~ "pwm1_enable: 2" ]]; then
+    echo "  [OK] Returned to BIOS Auto control safely."
+else
+    echo "  [FAIL] Failed to return to Auto mode!"
     exit 1
 fi
 

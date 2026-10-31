@@ -217,8 +217,13 @@ modprobe hp_wmi
 modprobe hp_omen_extra 2>/dev/null || true
 
 # Verify modules are active in kernel
+LOADED_HPWMI=$(modinfo -F filename hp_wmi 2>/dev/null || true)
 if lsmod | grep -q "^hp_wmi "; then
-    echo "  [OK] Patched hp_wmi driver is active in kernel."
+    if echo "$LOADED_HPWMI" | grep -qE "updates|extra|dkms"; then
+        echo "  [OK] Patched DKMS hp_wmi driver is compiled & active: $LOADED_HPWMI"
+    else
+        echo "  [INFO] hp_wmi active in kernel: $LOADED_HPWMI"
+    fi
 else
     echo "  [WARNING] hp_wmi module could not be verified in lsmod."
 fi
