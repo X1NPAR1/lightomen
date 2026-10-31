@@ -2,124 +2,98 @@
 
 **Ultra-Lightweight Hardware Control Center for HP OMEN & Victus Laptops on Linux**
 
-Written in 100% pure, idiomatic Rust with zero runtime bloat — no Tokio, no Serde, pure standard library, `libc`, and `evdev`. Consumes under 2.5 MB RAM in the background.
+Pure, idiomatic Rust with zero runtime bloat — no Tokio, no Serde, pure standard library, `libc`, and `evdev`. Consumes under 1 MB RAM in the background.
 
 ![LightOmen UI](assets/lightomen.png)
 
 ---
 
-## Key Features
+## ⚠️ Important Prerequisites (EC & ACPI Setup)
 
-* **Dynamic Fan Curve Editor (with True 0 RPM Silent Mode)**:
-  * 7-point interactive curve editor for CPU and GPU.
-  * **Fan-Stop (0 RPM)**: Drag points to the bottom to completely stop the fans for whisper-quiet idle operation.
-  * **Hardware Operational Floor (~1800 RPM)**: Automatically engages the fan safely when temperature thresholds are crossed.
-  * **Link Curves**: Synchronize CPU and GPU fan curves with one click or tune them independently.
-  * Quick Presets: Quiet, Balanced, and Aggressive.
+To allow the Linux kernel to access and monitor Embedded Controller (EC) registers without ACPI resource conflicts, configure the following once before running the installer:
 
-* **Power & Performance Profiles**:
-  * **Eco**: Power-saving mode with reduced fan activity and cool temps.
-  * **Balanced**: Daily driver mode balancing cooling and battery life.
-  * **Performance**: Unlocks maximum power limits, enabling GPU TGP boost and dynamic PPAB wattage.
+### 1. Enable Lax ACPI Resource Enforcement (GRUB)
+Open `/etc/default/grub` in an editor:
+```bash
+sudo nano /etc/default/grub
+```
+Append `acpi_enforce_resources=lax` to `GRUB_CMDLINE_LINUX_DEFAULT`. For example:
+```bash
+GRUB_CMDLINE_LINUX_DEFAULT="quiet acpi_enforce_resources=lax"
+```
+Update your bootloader and reboot:
+```bash
+sudo update-grub
+sudo reboot
+```
 
-* **Hardware MUX Switch**:
-  * Easily toggle between **Hybrid (AMD iGPU + NVIDIA PRIME)** for battery efficiency and **Discrete (Direct dGPU)** for maximum gaming FPS and lowest display latency.
-
-* **Real-Time Hardware Telemetry**:
-  * Live CPU and GPU temperatures with EMA smoothing (eliminates AMD Precision Boost fan cycling).
-  * True hardware readings even when NVIDIA dGPU enters `D3cold` power-saving states.
-  * Live tachometer fan RPM monitoring and wattage power consumption.
-  * Auto-detection of motherboard ID (e.g., `8BD4`).
-
-* **Physical OMEN Hotkey & Key Learning**:
-  * Press your laptop's physical OMEN key to instantly open or close the control panel.
-  * Built-in interactive hotkey learning mode to pair any custom key code.
-
-* **Wayland-Native Spawn-on-Demand (Zero Background Bloat)**:
-  * When closed, the graphical interface exits completely: **0 MB RAM, 0% CPU**.
-  * Spawns instantly in under 35ms when triggered from the OMEN key or system tray.
-  * Native Wayland window dragging via left-click or right-click on the top header.
-
-* **Lightweight System Tray Companion**:
-  * Real-time temperature display in your desktop tray (KDE Plasma, GNOME, Sway, Hyprland).
-  * Quick profile and fan mode switching without opening the main window.
+### 2. Enable EC Read/Write Support (`ec_sys`)
+Ensure the kernel `ec_sys` module allows EC register access for hardware sensors:
+```bash
+echo "options ec_sys write_support=1" | sudo tee /etc/modprobe.d/ec_sys.conf
+echo "ec_sys" | sudo tee /etc/modules-load.d/ec_sys.conf
+sudo modprobe ec_sys
+```
 
 ---
 
-## Installation
+## Key Features
 
-### 1. Clone the repository
+* **Dynamic Fan Curves & True 0 RPM Silent Mode**:
+  * 7-point interactive curve editor for CPU & GPU.
+  * **Silent Fan-Stop (0 RPM)**: Safely stops fans at idle without EC watchdog lockouts.
+  * **1100 RPM Hardware Floor**: Smooth, whisper-quiet minimum spinning floor matching HP hardware.
+  * **Emergency Thermal Override**: Automatically triggers Max Boost at ≥90°C.
+* **CPU Turbo Boost Management**:
+  * Toggle CPU Turbo Boost globally or automatically disable on Battery (caps aggressive 5.0 GHz spikes to base frequency, dropping temps by 10–15°C).
+* **Power Profiles & MUX Switch**:
+  * Eco, Balanced, and Performance modes with dynamic NVIDIA TGP/PPAB power limits.
+  * Hardware MUX Switch: Hybrid (iGPU + dGPU) and Discrete (direct dGPU) toggling.
+* **Minimal Footprint**:
+  * Background daemon uses **< 1 MB RAM** and **0.0% CPU**.
+  * GUI spawns on demand via physical OMEN key or system tray, exiting completely when closed (0 MB RAM).
+
+---
+
+## Installation & Removal
+
+### Install / Update
 ```bash
 git clone https://github.com/zyr1on/lightomen.git
 cd lightomen
-```
-
-### 2. Run the automated installer
-```bash
-chmod +x install.sh
 sudo ./install.sh
 ```
+*The installer automatically cleans old processes/PIDs, builds optimized binaries, registers the DKMS driver, sets up module autoloading, and configures systemd.*
 
-The installer will:
-1. Detect your session (Wayland / X11).
-2. Install required kernel headers and build dependencies.
-3. Install the patched `hp-omen-extra` DKMS kernel module for complete WMI support.
-4. Compile release binaries with link-time optimization (`lto = "fat"`, `opt-level = "z"`).
-5. Install systemd services, desktop entries, and tray autostart.
+### Complete Uninstallation
+```bash
+sudo ./uninstall.sh
+```
+*Restores fan cooling to BIOS Auto, cleans DKMS drivers, removes all systemd services, binaries, autostart entries, and configuration files.*
 
 ---
 
 ## Usage
 
-* **Open GUI via Terminal:**
+* **Open GUI:** Run `lightomen-gui` in terminal or click the LightOmen icon in your system tray.
+* **Physical Hotkey:** Press the physical OMEN key on your laptop keyboard.
+* **Daemon Status:**
   ```bash
-  lightomen-gui
+  systemctl status lightomen-daemon.service
   ```
-* **Toggle with OMEN Hotkey:** Press the physical OMEN key on your keyboard.
-* **System Tray:** Click the LightOmen icon in your system tray to open the UI or right-click to quickly change profiles.
-* **Service Management:**
-  ```bash
-  sudo systemctl status lightomen-daemon.service
-  ```
-
----
-
-## Project Architecture
-
-LightOmen is organized as a lightweight Rust workspace:
-
-```text
-lightomen/
-├── lightomen-common/    # #[repr(C)] binary IPC protocol & configuration structures
-├── lightomen-daemon/    # Low-level root service (sysfs, EC I/O, evdev hotkeys, IPC socket)
-├── lightomen-gui/       # Wayland-native eframe/egui interface & system tray companion
-├── driver/              # Patched hp-omen-extra DKMS kernel module source
-├── assets/              # Icons and application branding
-├── systemd/             # Systemd service units
-└── install.sh           # One-click native installer script
-```
-
-### Memory Footprint Comparison
-
-| Component | Proprietary Software | LightOmen |
-| :--- | :--- | :--- |
-| Background Daemon | ~150 - 300 MB | ~2.3 MB |
-| Idle Tray Companion | ~80 - 150 MB | ~3.4 MB |
-| GUI (Closed) | ~100 MB | Strictly 0 MB |
 
 ---
 
 ## Testing
 
-Run automated workspace unit tests and end-to-end integration tests:
-
+Run workspace unit tests and verification suite:
 ```bash
 cargo test --workspace
-sudo ./test-e2e.sh
+sudo ./scripts/verify_fan_hardware.sh
 ```
 
 ---
 
 ## License
 
-This project is licensed under the MIT License / GPL v2.
+MIT License / GPL v2.
