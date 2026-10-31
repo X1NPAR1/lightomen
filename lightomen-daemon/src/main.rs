@@ -74,6 +74,7 @@ fn main() {
     let mut last_mux = config.mux_mode;
     let mut last_ac_online: Option<bool> = None;
     let mut last_cpu_boost: Option<bool> = None;
+    let mut last_applied_refresh_hz: Option<u32> = None;
 
     // Previous valid readings
     let mut prev_cpu_temp: u16 = 45;
@@ -97,9 +98,6 @@ fn main() {
             if is_ac != was_ac {
                 if !is_ac {
                     // Transitioned from AC to Battery (unplugged)
-                    if current_cfg.low_hz_on_battery() == 1 {
-                        HotkeyMonitor::set_display_refresh_rate(60);
-                    }
                     if current_cfg.eco_on_battery() == 1 && current_cfg.power_profile != POWER_PROFILE_ECO {
                         user_ac_profile = current_cfg.power_profile;
                         current_cfg.power_profile = POWER_PROFILE_ECO;
@@ -111,9 +109,6 @@ fn main() {
                     }
                 } else {
                     // Transitioned from Battery to AC (plugged in)
-                    if current_cfg.low_hz_on_battery() == 1 {
-                        HotkeyMonitor::set_display_refresh_rate(144);
-                    }
                     if current_cfg.eco_on_battery() == 1 && current_cfg.power_profile != user_ac_profile {
                         current_cfg.power_profile = user_ac_profile;
                         ProfileController::apply_power_profile(&mut hwmon, user_ac_profile);
@@ -127,20 +122,27 @@ fn main() {
             }
         } else {
             // Initial boot check
-            if on_battery {
-                if current_cfg.low_hz_on_battery() == 1 {
-                    HotkeyMonitor::set_display_refresh_rate(60);
-                }
-                if current_cfg.eco_on_battery() == 1 && current_cfg.power_profile != POWER_PROFILE_ECO {
-                    user_ac_profile = current_cfg.power_profile;
-                    current_cfg.power_profile = POWER_PROFILE_ECO;
-                    ProfileController::apply_power_profile(&mut hwmon, POWER_PROFILE_ECO);
-                    last_profile = POWER_PROFILE_ECO;
-                    let mut st = status.lock().unwrap();
-                    st.config.power_profile = POWER_PROFILE_ECO;
-                }
+            if on_battery && current_cfg.eco_on_battery() == 1 && current_cfg.power_profile != POWER_PROFILE_ECO {
+                user_ac_profile = current_cfg.power_profile;
+                current_cfg.power_profile = POWER_PROFILE_ECO;
+                ProfileController::apply_power_profile(&mut hwmon, POWER_PROFILE_ECO);
+                last_profile = POWER_PROFILE_ECO;
+                let mut st = status.lock().unwrap();
+                st.config.power_profile = POWER_PROFILE_ECO;
             }
             last_ac_online = Some(is_ac);
+        }
+
+        // Apply display refresh rate once graphical user session is fully active
+        let target_hz = if on_battery && current_cfg.low_hz_on_battery() == 1 { 60 } else { 144 };
+        if current_cfg.low_hz_on_battery() == 1 {
+            if last_applied_refresh_hz != Some(target_hz) && HotkeyMonitor::is_user_session_ready() {
+                HotkeyMonitor::set_display_refresh_rate(target_hz);
+                last_applied_refresh_hz = Some(target_hz);
+            }
+        } else if last_applied_refresh_hz == Some(60) && HotkeyMonitor::is_user_session_ready() {
+            HotkeyMonitor::set_display_refresh_rate(144);
+            last_applied_refresh_hz = Some(144);
         }
 
         // Check if power profile or MUX was changed via IPC

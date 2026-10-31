@@ -233,9 +233,24 @@ impl HotkeyMonitor {
         (target_user, target_uid, runtime_dir, wayland_disp)
     }
 
+    /// Check if the graphical user session (Wayland or X11) is active and ready
+    pub fn is_user_session_ready() -> bool {
+        let (target_user, target_uid, runtime_dir, wayland_disp) = Self::detect_user_session();
+        if target_user == "root" || target_uid < 1000 {
+            return false;
+        }
+        if Path::new(&runtime_dir).join(&wayland_disp).exists() || Path::new("/tmp/.X11-unix/X0").exists() {
+            return true;
+        }
+        false
+    }
+
     /// Set display refresh rate in user session via kscreen-doctor
     pub fn set_display_refresh_rate(hz: u32) {
         let (target_user, _, _, _) = Self::detect_user_session();
+        if target_user == "root" {
+            return;
+        }
         let machine_arg = format!("--machine={}@.host", target_user);
         let mode_arg = format!("1920x1080@{}", hz);
 

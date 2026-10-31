@@ -386,17 +386,19 @@ impl HwmonBackend {
     /// Enable or disable CPU Turbo Boost (AMD Core Performance Boost / Intel Turbo Boost)
     pub fn set_cpu_boost(&mut self, enable: bool) -> bool {
         let val = if enable { "1\n" } else { "0\n" };
-        let mut ok = false;
         let global_boost = PathBuf::from("/sys/devices/system/cpu/cpufreq/boost");
         if global_boost.exists() {
             if fs::write(&global_boost, val).is_ok() {
-                ok = true;
+                return true;
             }
         }
+        let mut ok = false;
         for i in 0..32 {
             let p = PathBuf::from(format!("/sys/devices/system/cpu/cpufreq/policy{}/boost", i));
             if p.exists() {
-                let _ = fs::write(p, val);
+                if fs::write(p, val).is_ok() {
+                    ok = true;
+                }
             }
         }
         ok
@@ -433,9 +435,7 @@ impl HwmonBackend {
             1 => {
                 // FAN_MODE_MAX (1):
                 // Directly write 0 to pwm1_enable. In hp-wmi, 0 triggers PWM_MODE_MAX.
-                // Also write 255 to pwm1 duty if available for immediate responsiveness.
                 if self.last_applied_mode != Some(1) {
-                    let _ = Self::write_sysfs_string(&self.fan_pwm_duty_path, "255\n");
                     let _ = Self::write_sysfs_string(&self.fan_pwm_enable_path, "0\n");
                     self.last_applied_mode = Some(1);
                     self.last_target1 = self.max_rpm;
@@ -466,14 +466,16 @@ impl HwmonBackend {
                     return;
                 }
 
-                // If recovering from MAX boost (0), reset EC lock by toggling 2 then 1
+                // If recovering from MAX boost (0), disengage firmware max-fan bit by toggling 2 then 1
                 if was_max {
                     let _ = Self::write_sysfs_string(&self.fan_pwm_enable_path, "2\n");
-                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    std::thread::sleep(std::time::Duration::from_millis(100));
                     let _ = Self::write_sysfs_string(&self.fan_pwm_enable_path, "1\n");
+                    std::thread::sleep(std::time::Duration::from_millis(20));
                 } else if mode_changed || (self.last_target1 == 0 && self.last_target2 == 0) {
                     // Switching from AUTO or 0-RPM into active manual spinning
                     let _ = Self::write_sysfs_string(&self.fan_pwm_enable_path, "1\n");
+                    std::thread::sleep(std::time::Duration::from_millis(20));
                 }
 
                 let t1_diff = (t1 as i32 - self.last_target1 as i32).abs();
@@ -489,10 +491,11 @@ impl HwmonBackend {
                     || (t2 == 0 && self.last_target2 != 0)
                     || (t2 != 0 && self.last_target2 == 0)
                 {
-                    let _ = Self::write_sysfs_string(&self.fan1_target_path, &format!("{}\n", t1));
-                    let _ = Self::write_sysfs_string(&self.fan2_target_path, &format!("{}\n", t2));
-
-                    if self.fan_pwm_duty_path.is_some() {
+                    if self.fan1_target_path.is_some() && self.fan2_target_path.is_some() {
+                        let _ = Self::write_sysfs_string(&self.fan1_target_path, &format!("{}\n", t1));
+                        std::thread::sleep(std::time::Duration::from_millis(15));
+                        let _ = Self::write_sysfs_string(&self.fan2_target_path, &format!("{}\n", t2));
+                    } else if self.fan_pwm_duty_path.is_some() {
                         let primary = t1.max(t2);
                         let duty = ((primary as u32 * 255) / self.max_rpm as u32).clamp(50, 255);
                         let _ = Self::write_sysfs_string(&self.fan_pwm_duty_path, &format!("{}\n", duty));
@@ -506,11 +509,6 @@ impl HwmonBackend {
             _ => {
                 // FAN_MODE_AUTO (0):
                 if self.last_applied_mode != Some(0) {
-                    if self.last_applied_mode == Some(1) {
-                        // Unlatch MAX mode before giving control back to BIOS
-                        let _ = Self::write_sysfs_string(&self.fan1_target_path, "2000\n");
-                        let _ = Self::write_sysfs_string(&self.fan2_target_path, "2000\n");
-                    }
                     let _ = Self::write_sysfs_string(&self.fan_pwm_enable_path, "2\n");
                     self.last_applied_mode = Some(0);
                     self.last_target1 = 0;

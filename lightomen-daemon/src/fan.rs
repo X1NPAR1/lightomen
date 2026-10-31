@@ -79,21 +79,25 @@ impl FanController {
                 let cpu_pct = Self::evaluate_curve(cpu_curve, cpu_temp);
                 let target1 = Self::pct_to_rpm(cpu_pct, max_rpm);
 
-                let target2 = if gpu_temp == 0 {
-                    // NVIDIA dGPU is in D3cold power-saving sleep
+                let target2 = if gpu_curve == cpu_curve {
+                    // Linked curves (CPU + GPU linked together):
+                    // Both fans must spin at the exact same RPM!
+                    if on_battery && gpu_zero_rpm_enabled == 1 && gpu_temp == 0 && cpu_temp < 75 {
+                        0
+                    } else {
+                        target1
+                    }
+                } else if gpu_temp == 0 {
+                    // NVIDIA dGPU is in D3cold power-saving sleep (Independent curves)
                     if target1 == 0 {
-                        // When CPU is cold enough for 0 RPM (Silent / Zero-RPM mode), keep both fans silent!
                         0
                     } else if on_battery && gpu_zero_rpm_enabled == 1 {
-                        // On battery with Zero-RPM enabled:
-                        // Shared heatsink safety: if CPU exceeds 75°C, engage Fan 2 to assist
                         if cpu_temp >= 75 {
                             target1
                         } else {
-                            0 // Full Zero-RPM silent mode on battery!
+                            0
                         }
                     } else {
-                        // On AC: track CPU target gently or maintain quiet operational airflow
                         let gpu_pct = Self::evaluate_curve(gpu_curve, 35);
                         Self::pct_to_rpm(gpu_pct, max_rpm).min(target1)
                     }

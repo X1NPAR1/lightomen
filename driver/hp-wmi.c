@@ -1657,7 +1657,7 @@ static int hp_wmi_get_mux_supported_modes(u8 *supported)
 		return -ENODEV;
 
 	ret = hp_wmi_perform_query(HPWMI_GRAPHICS_MUX_QUERY, HPWMI_READ,
-				   legacy_buffer, sizeof(legacy_buffer), 0);
+				   legacy_buffer, sizeof(legacy_buffer), sizeof(legacy_buffer));
 	if (ret < 0)
 		return ret;
 	if (ret > 0)
@@ -1696,7 +1696,8 @@ static int hp_wmi_set_mux_mode(u8 mode)
 				   buffer, sizeof(buffer), sizeof(buffer));
 	if (ret < 0)
 		return ret;
-	if (ret > 0)
+	/* Return code 6 on HP WMI 0x52 indicates accepted pending restart */
+	if (ret > 0 && ret != 6)
 		return -EINVAL;
 
 	return 0;
@@ -3189,6 +3190,12 @@ static int hp_wmi_apply_fan_settings(struct hp_wmi_hwmon_priv *priv)
 	case PWM_MODE_MANUAL:
 		if (!priv->fan_speed_available)
 			return -EOPNOTSUPP;
+		/* Disengage max-fan hardware flag if leaving max mode */
+		if (priv->prev_mode == PWM_MODE_MAX) {
+			ret = hp_wmi_fan_speed_max_set(0);
+			if (ret < 0)
+				pr_warn("Failed to clear max fan flag on manual transition\n");
+		}
 		hp_wmi_get_fan_count_userdefine_trigger();
 		schedule_delayed_work(&priv->keep_alive_dwork,
 				      secs_to_jiffies(KEEP_ALIVE_DELAY_SECS));
@@ -3369,7 +3376,7 @@ static int hp_wmi_hwmon_write(struct device *dev, enum hwmon_sensor_types type,
 				rpm = clamp_val(rpm, priv->min_rpm, priv->max_rpm);
 			}
 			priv->target_rpms[0] = (u16)rpm * 100;
-			priv->target_rpms[1] = (u16)(rpm > 0 ? (rpm + priv->gpu_delta) * 100 : 0);
+			priv->target_rpms[1] = (u16)(rpm > 0 ? (u16)rpm * 100 : 0);
 			priv->pwm = val;
 			ret = hp_wmi_apply_fan_settings(priv);
 			break;
@@ -3391,22 +3398,24 @@ static int hp_wmi_hwmon_write(struct device *dev, enum hwmon_sensor_types type,
 				break; /* already in MANUAL, preserve target_rpms */
 
 			/*
-			 * Seed target RPMs from the current fan speed so the
-			 * transition to manual mode is smooth.
+			 * Seed target RPMs from current fan speed for smooth transition
+			 * only if not coming from MAX mode and targets are not already set.
 			 */
-			if (priv->uses_victus_s_fan_commands)
-				rpm = hp_wmi_get_fan_speed_victus_s(0);
-			else
-				rpm = hp_wmi_get_fan_speed(0);
-			if (rpm >= 0)
-				priv->target_rpms[0] = rpm;
+			if (priv->prev_mode != PWM_MODE_MAX && priv->target_rpms[0] == 0) {
+				if (priv->uses_victus_s_fan_commands)
+					rpm = hp_wmi_get_fan_speed_victus_s(0);
+				else
+					rpm = hp_wmi_get_fan_speed(0);
+				if (rpm >= 0)
+					priv->target_rpms[0] = rpm;
 
-			if (priv->uses_victus_s_fan_commands)
-				rpm = hp_wmi_get_fan_speed_victus_s(1);
-			else
-				rpm = hp_wmi_get_fan_speed(1);
-			if (rpm >= 0)
-				priv->target_rpms[1] = rpm;
+				if (priv->uses_victus_s_fan_commands)
+					rpm = hp_wmi_get_fan_speed_victus_s(1);
+				else
+					rpm = hp_wmi_get_fan_speed(1);
+				if (rpm >= 0)
+					priv->target_rpms[1] = rpm;
+			}
 
 			priv->mode = PWM_MODE_MANUAL;
 			ret = hp_wmi_apply_fan_settings(priv);
@@ -3623,9 +3632,9 @@ static int hp_wmi_setup_fan_settings(struct hp_wmi_hwmon_priv *priv)
 				
 				priv->min_rpm = min_rpm;
 				priv->max_rpm = max_rpm;
-				priv->gpu_delta = gpu_delta;
+				priv->gpu_delta = 0;
 				priv->max_rpms[0] = max_rpm * 100;
-				priv->max_rpms[1] = (max_rpm + gpu_delta) * 100;
+				priv->max_rpms[1] = max_rpm * 100;
 				priv->target_rpms[0] = 0;
 				priv->target_rpms[1] = 0;
 				priv->prev_mode      = -1;
