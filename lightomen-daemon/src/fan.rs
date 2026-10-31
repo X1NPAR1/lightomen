@@ -50,7 +50,7 @@ impl FanController {
 
     /// Apply fan mode and calculated speeds to hardware
     pub fn apply(
-        _ec: &EmbeddedController,
+        ec: &EmbeddedController,
         hwmon: &mut HwmonBackend,
         mode: u8,
         cpu_curve: &[u8; 7],
@@ -61,11 +61,17 @@ impl FanController {
         on_battery: bool,
     ) {
         let max_rpm = hwmon.max_rpm;
+        let was_max = hwmon.last_applied_mode == Some(FAN_MODE_MAX);
 
         // EMERGENCY MAX OVERRIDE: CPU >= 95°C or GPU >= 90°C
         if cpu_temp >= 95 || gpu_temp >= 90 {
             hwmon.apply_fan_mode(FAN_MODE_MAX, max_rpm, max_rpm);
             return;
+        }
+
+        // Direct EC hardware unlatch when leaving MAX fan mode
+        if was_max && mode != FAN_MODE_MAX {
+            ec.unlatch_max_fan(1100);
         }
 
         match mode {

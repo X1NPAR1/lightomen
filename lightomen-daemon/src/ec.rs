@@ -217,4 +217,16 @@ impl EmbeddedController {
         let _ = self.write_reg(REG_FAN_BOOST, 0);
         self.write_reg(REG_MANUAL, MANUAL_OFF)
     }
+
+    /// Break the EC's internal 120-second MAX cooling latch immediately
+    pub fn unlatch_max_fan(&self, target_rpm: u16) {
+        let _ = self.write_reg(REG_FAN_BOOST, 0);
+        let _ = self.write_reg(REG_COUNTDOWN, 0);
+        let srp = ((target_rpm / 100) as u8).clamp(11, 60);
+        let _ = self.write_reg(REG_FAN_SET1_RPM100, srp);
+        let _ = self.write_reg(REG_FAN_SET2_RPM100, srp);
+        let pct = ((target_rpm as u32 * 100) / 6000) as u8;
+        let _ = self.write_reg(REG_FAN_SET1_PCT, pct.clamp(18, 100));
+        let _ = self.write_reg(REG_FAN_SET2_PCT, pct.clamp(18, 100));
+    }
 }

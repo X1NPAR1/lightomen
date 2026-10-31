@@ -25,7 +25,7 @@ pub struct HwmonBackend {
     gpu_pci_status_file: Option<File>,
     pub max_rpm: u16,
     pub board_id: [u8; 8],
-    last_applied_mode: Option<u8>,
+    pub last_applied_mode: Option<u8>,
     last_target1: u16,
     last_target2: u16,
 }
@@ -452,12 +452,30 @@ impl HwmonBackend {
                 let was_max = self.last_applied_mode == Some(1);
                 let mode_changed = self.last_applied_mode != Some(2);
 
+                if was_max {
+                    // INSTANT UNLATCH FROM MAX FAN:
+                    // When transitioning from MAX mode, write targets FIRST at the operational floor
+                    // so the kernel module's 0x2E query receives non-zero RPMs immediately,
+                    // breaking the HP EC's 120-second watchdog timer without delay!
+                    let active_t1 = t1.max(1100);
+                    let active_t2 = t2.max(1100);
+                    if self.fan1_target_path.is_some() && self.fan2_target_path.is_some() {
+                        let _ = Self::write_sysfs_string(&self.fan1_target_path, &format!("{}\n", active_t1));
+                        let _ = Self::write_sysfs_string(&self.fan2_target_path, &format!("{}\n", active_t2));
+                    }
+                    let _ = Self::write_sysfs_string(&self.fan_pwm_enable_path, "1\n");
+                    self.last_applied_mode = Some(2);
+                    self.last_target1 = active_t1;
+                    self.last_target2 = active_t2;
+                    return;
+                }
+
                 if t1 == 0 && t2 == 0 {
                     // When both fans are 0 RPM:
                     // Sending {0,0} via manual 0x2E query freezes the EC and arms a 120s watchdog.
                     // Instead, hand control over to BIOS (pwm1_enable = 2 AUTO mode).
                     // In AUTO mode, BIOS naturally stops the fans when cold (<40°C) without EC lockup.
-                    if self.last_target1 != 0 || self.last_target2 != 0 || was_max || mode_changed {
+                    if self.last_target1 != 0 || self.last_target2 != 0 || mode_changed {
                         let _ = Self::write_sysfs_string(&self.fan_pwm_enable_path, "2\n");
                         self.last_applied_mode = Some(2);
                         self.last_target1 = 0;

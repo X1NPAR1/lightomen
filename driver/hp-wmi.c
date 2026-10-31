@@ -725,7 +725,7 @@ struct hp_wmi_hwmon_priv {
 
 struct victus_s_fan_table_header {
 	u8 num_fans;
-	u8 unknown;
+	u8 entry_count;
 } __packed;
 
 struct victus_s_fan_table_entry {
@@ -1090,10 +1090,10 @@ static int hp_wmi_fan_speed_max_set(int enabled)
 static int hp_wmi_fan_speed_set(struct hp_wmi_hwmon_priv *priv,
 				u16 cpu_rpm, u16 gpu_rpm)
 {
-	u8 fan_speed[2];
+	u8 fan_speed[128] = {0};
 	int ret;
 
-	/* BIOS expects values in units of 100 RPM */
+	/* BIOS expects values in units of 100 RPM within a 128-byte payload */
 	fan_speed[CPU_FAN] = (u8)(cpu_rpm / 100);
 	fan_speed[GPU_FAN] = (u8)(gpu_rpm / 100);
 
@@ -1131,6 +1131,21 @@ static int hp_wmi_fan_speed_reset(struct hp_wmi_hwmon_priv *priv)
 	ret = hp_wmi_fan_speed_max_set(0);
 	if (ret)
 		return ret;
+
+	/*
+	 * [LIGHTOMEN PATCH]: On Victus S / modern OMEN, clearing the max flag
+	 * (WMI 0x27 {0}) alone leaves the EC latched at MAX for up to 120s.
+	 * Following Ohman's proven discovery, send a quick 0x2E level write at the
+	 * minimum operational floor (1100 RPM) to break the 120s latch before
+	 * handing control back to the BIOS thermal profile.
+	 */
+	if (priv->fan_speed_available && (priv->prev_mode == PWM_MODE_MAX || priv->prev_mode == PWM_MODE_MANUAL)) {
+		u8 unlatch_speed[128] = {0};
+		unlatch_speed[CPU_FAN] = priv->min_rpm > 0 ? priv->min_rpm : 11;
+		unlatch_speed[GPU_FAN] = priv->min_rpm > 0 ? priv->min_rpm : 11;
+		hp_wmi_perform_query(HPWMI_VICTUS_S_FAN_SPEED_SET_QUERY,
+				    HPWMI_GM, &unlatch_speed, sizeof(unlatch_speed), 0);
+	}
 
 	priv->target_rpms[0] = 0;
 	priv->target_rpms[1] = 0;
@@ -3444,6 +3459,15 @@ static int hp_wmi_hwmon_write(struct device *dev, enum hwmon_sensor_types type,
 					rpm = hp_wmi_get_fan_speed(1);
 				if (rpm >= 0)
 					priv->target_rpms[1] = rpm;
+			} else if (priv->prev_mode == PWM_MODE_MAX && priv->target_rpms[0] == 0) {
+				/*
+				 * [LIGHTOMEN PATCH]: When leaving MAX mode, default targets must NOT be 0.
+				 * Sending {0,0} to 0x2E locks the EC in manual 0 RPM for 120s.
+				 * Set them to the operational floor so 0x2E instantly unlatches MAX mode.
+				 */
+				u16 floor_rpm = priv->min_rpm > 0 ? (priv->min_rpm * 100) : 1100;
+				priv->target_rpms[0] = floor_rpm;
+				priv->target_rpms[1] = floor_rpm;
 			}
 
 			priv->mode = PWM_MODE_MANUAL;
@@ -3645,13 +3669,13 @@ static int hp_wmi_setup_fan_settings(struct hp_wmi_hwmon_priv *priv)
 				   &fan_data, 4, sizeof(fan_data));
 	if (ret == 0) {
 		fan_table = (struct victus_s_fan_table *)fan_data;
-		if (fan_table->header.num_fans > 0 &&
+		u8 count = fan_table->header.entry_count > 0 ? fan_table->header.entry_count : fan_table->header.num_fans;
+		if (count > 0 &&
 		    sizeof(struct victus_s_fan_table_header) +
-		    sizeof(struct victus_s_fan_table_entry) *
-		    fan_table->header.num_fans <= sizeof(fan_data)) {
+		    sizeof(struct victus_s_fan_table_entry) * count <= sizeof(fan_data)) {
 			
 			min_rpm = fan_table->entries[0].cpu_rpm;
-			max_rpm = fan_table->entries[fan_table->header.num_fans - 1].cpu_rpm;
+			max_rpm = fan_table->entries[count - 1].cpu_rpm;
 
 			/* Workaround for buggy WMI firmware on boards like 8BBE which return max_rpm=18 (1800 RPM) */
 			if (max_rpm >= 30) {
