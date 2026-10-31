@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+
 echo "=========================================================="
 echo "  LightOmen Linux: Complete Native System Installer"
 echo "  Hardware Control for HP Omen & Victus Laptops"
@@ -139,28 +141,64 @@ else
 fi
 
 # 4. Install Kernel & Build Dependencies
-echo -e "\n[4/8] Installing Kernel & System Dependencies..."
+echo -e "\n[4/8] Installing Kernel & System Dependencies via Package Manager..."
 if command -v apt-get &>/dev/null; then
-    apt-get update -qq
-    apt-get install -y -qq dkms build-essential linux-headers-"$(uname -r)" \
-        libudev-dev libfontconfig1-dev libx11-dev libdbus-1-dev
+    echo "  • Updating package lists (apt-get update)..."
+    apt-get update -qq || true
+    KERNEL_HEADERS="linux-headers-$(uname -r)"
+    echo "  • Installing dkms, kernel headers, and runtime/build libraries..."
+    apt-get install -y -qq \
+        dkms \
+        build-essential \
+        libudev-dev \
+        libfontconfig1-dev \
+        libx11-dev \
+        libdbus-1-dev \
+        libxkbcommon-dev \
+        libx11-6 \
+        libdbus-1-3 \
+        libudev1 \
+        "$KERNEL_HEADERS" 2>/dev/null || apt-get install -y -qq dkms build-essential libudev-dev libfontconfig1-dev libx11-dev libdbus-1-dev linux-headers-generic 2>/dev/null || true
+    echo "  [OK] Apt dependencies verified."
 elif command -v pacman &>/dev/null; then
-    pacman -Sy --noconfirm --needed dkms base-devel linux-headers dbus
+    echo "  • Installing dependencies via pacman..."
+    pacman -Sy --noconfirm --needed dkms base-devel linux-headers dbus fontconfig libx11 libxkbcommon
+    echo "  [OK] Pacman dependencies verified."
 elif command -v dnf &>/dev/null; then
-    dnf install -y -q dkms kernel-devel kernel-headers dbus-devel
+    echo "  • Installing dependencies via dnf..."
+    dnf install -y -q dkms kernel-devel kernel-headers dbus-devel systemd-devel gcc make fontconfig-devel libX11-devel libxkbcommon-devel
+    echo "  [OK] Dnf dependencies verified."
 fi
 
-# 5. Adapt & Install hp-omen-extra DKMS Driver
-echo -e "\n[5/8] Installing Patched hp-omen-extra DKMS Driver..."
+# 5. Adapt & Install hp-wmi & hp-omen-extra DKMS Drivers
+echo -e "\n[5/8] Installing Patched hp-wmi & hp-omen-extra DKMS Drivers..."
 DKMS_SRC="/usr/src/hp-omen-extra-2.2.0"
 rm -rf "$DKMS_SRC"
 mkdir -p "$DKMS_SRC"
 cp -r "$SCRIPT_DIR/driver/"* "$DKMS_SRC/"
 
+# Purge any stale custom modules from previous builds to prevent symbol conflicts
+KVER=$(uname -r)
+find /lib/modules/"$KVER" /usr/lib/modules/"$KVER" -name 'hp-omen-extra.ko*' -delete 2>/dev/null || true
+find /lib/modules/"$KVER" /usr/lib/modules/"$KVER" -path '*/updates/*' -name 'hp-wmi.ko*' -delete 2>/dev/null || true
+depmod -a 2>/dev/null || true
+
+# Remove old DKMS registrations across versions if any
+if command -v dkms &>/dev/null; then
+    for v in $(dkms status hp-omen-extra 2>/dev/null | grep -oP "(?<=hp-omen-extra[/, ])[^,:]+" | tr -d ' ' | sort -u); do
+        [ -n "$v" ] && dkms remove -m hp-omen-extra -v "$v" --all 2>/dev/null || true
+    done
+fi
 dkms remove -m hp-omen-extra -v 2.2.0 --all 2>/dev/null || true
+
+# Add, compile, and install DKMS modules (builds both patched hp-wmi and hp-omen-extra)
+echo "  • Registering and compiling DKMS modules..."
 dkms add -m hp-omen-extra -v 2.2.0
 dkms build -m hp-omen-extra -v 2.2.0
 dkms install -m hp-omen-extra -v 2.2.0 --force
+
+# Update module dependencies map
+depmod -a
 
 # Autoload hp_wmi and hp_omen_extra on system boot
 mkdir -p /etc/modules-load.d
@@ -171,9 +209,22 @@ hp_omen_extra
 EOF
 cp -f /etc/modules-load.d/hp-omen-extra.conf /etc/modules-load.d/lightomen.conf
 
-# Load modules immediately
-modprobe hp_wmi 2>/dev/null || true
+# Reload modules immediately to replace stock kernel driver in memory
+echo "  • Reloading kernel modules (unloading stock, activating patched DKMS)..."
+modprobe -r hp_omen_extra 2>/dev/null || true
+modprobe -r hp_wmi 2>/dev/null || true
+modprobe hp_wmi
 modprobe hp_omen_extra 2>/dev/null || true
+
+# Verify modules are active in kernel
+if lsmod | grep -q "^hp_wmi "; then
+    echo "  [OK] Patched hp_wmi driver is active in kernel."
+else
+    echo "  [WARNING] hp_wmi module could not be verified in lsmod."
+fi
+if lsmod | grep -q "^hp_omen_extra "; then
+    echo "  [OK] hp_omen_extra companion driver is active in kernel."
+fi
 
 # 6. Check for Pre-compiled Binaries or Build from Source
 echo -e "\n[6/8] Preparing Binaries..."
@@ -181,26 +232,27 @@ DAEMON_SRC=""
 GUI_SRC=""
 TRAY_SRC=""
 
-if command -v cargo &>/dev/null; then
+if [ -f "$SCRIPT_DIR/bin/lightomen-daemon" ] && [ -f "$SCRIPT_DIR/bin/lightomen-gui" ] && [ -f "$SCRIPT_DIR/bin/lightomen-tray" ]; then
+    echo "  -> Found pre-compiled release binaries in ./bin/ (Ready for instant install)"
+    DAEMON_SRC="$SCRIPT_DIR/bin/lightomen-daemon"
+    GUI_SRC="$SCRIPT_DIR/bin/lightomen-gui"
+    TRAY_SRC="$SCRIPT_DIR/bin/lightomen-tray"
+elif [ -f "$SCRIPT_DIR/Cargo.toml" ] && command -v cargo &>/dev/null; then
     echo "  -> Compiling fresh release binaries from source via Cargo (lto=fat, opt-level=z)..."
     sudo -u "$REAL_USER" cargo build --release --workspace --manifest-path "$SCRIPT_DIR/Cargo.toml"
     DAEMON_SRC="$SCRIPT_DIR/target/release/lightomen-daemon"
     GUI_SRC="$SCRIPT_DIR/target/release/lightomen-gui"
     TRAY_SRC="$SCRIPT_DIR/target/release/lightomen-tray"
-elif [ -f "$SCRIPT_DIR/bin/lightomen-daemon" ] && [ -f "$SCRIPT_DIR/bin/lightomen-gui" ] && [ -f "$SCRIPT_DIR/bin/lightomen-tray" ]; then
-    echo "  -> Found pre-compiled release binaries in ./bin/ (Skipping Cargo compilation)"
-    DAEMON_SRC="$SCRIPT_DIR/bin/lightomen-daemon"
-    GUI_SRC="$SCRIPT_DIR/bin/lightomen-gui"
-    TRAY_SRC="$SCRIPT_DIR/bin/lightomen-tray"
 elif [ -f "$SCRIPT_DIR/target/release/lightomen-daemon" ] && [ -f "$SCRIPT_DIR/target/release/lightomen-gui" ] && [ -f "$SCRIPT_DIR/target/release/lightomen-tray" ]; then
     echo "  -> Found existing built release binaries in ./target/release/"
     DAEMON_SRC="$SCRIPT_DIR/target/release/lightomen-daemon"
     GUI_SRC="$SCRIPT_DIR/target/release/lightomen-gui"
     TRAY_SRC="$SCRIPT_DIR/target/release/lightomen-tray"
 else
-    echo "ERROR: 'cargo' is not installed and pre-compiled binaries were not found."
-    echo "Please install Rust (https://rustup.rs) or download the pre-compiled release package from:"
+    echo "ERROR: Neither pre-compiled binaries in ./bin/ nor 'cargo' build environment found."
+    echo "Please download the pre-compiled release package from:"
     echo "  https://github.com/zyr1on/lightomen/releases"
+    echo "or install Rust (https://rustup.rs) to build from source."
     exit 1
 fi
 
@@ -214,6 +266,12 @@ install -m 755 "$TRAY_SRC" /usr/local/bin/lightomen-tray
 ln -sf /usr/local/bin/lightomen-daemon /usr/local/bin/ohman-daemon
 ln -sf /usr/local/bin/lightomen-gui /usr/local/bin/ohman-gui
 ln -sf /usr/local/bin/lightomen-tray /usr/local/bin/ohman-tray
+
+# Install Uninstaller to system path
+if [ -f "$SCRIPT_DIR/uninstall.sh" ]; then
+    install -m 755 "$SCRIPT_DIR/uninstall.sh" /usr/local/bin/lightomen-uninstall
+    ln -sf /usr/local/bin/lightomen-uninstall /usr/local/bin/ohman-uninstall 2>/dev/null || true
+fi
 
 # Install High-Resolution Icons
 mkdir -p /usr/share/icons/hicolor/512x512/apps /usr/share/pixmaps

@@ -50,13 +50,18 @@ jobs:
           cp target/release/lightomen-gui "${PKG_NAME}/bin/"
           cp target/release/lightomen-tray "${PKG_NAME}/bin/"
           
-          # Copy auxiliary assets and driver
+          # Copy auxiliary assets, scripts and driver
           cp -r driver "${PKG_NAME}/"
           cp -r assets "${PKG_NAME}/"
           cp -r systemd "${PKG_NAME}/"
+          cp -r scripts "${PKG_NAME}/"
           cp install.sh "${PKG_NAME}/"
+          cp uninstall.sh "${PKG_NAME}/"
           cp README.md "${PKG_NAME}/"
+          [ -f AUDIT_AND_WAYLAND_SETUP.md ] && cp AUDIT_AND_WAYLAND_SETUP.md "${PKG_NAME}/" || true
           chmod +x "${PKG_NAME}/install.sh"
+          chmod +x "${PKG_NAME}/uninstall.sh"
+          chmod +x "${PKG_NAME}/scripts/"*.sh 2>/dev/null || true
           chmod +x "${PKG_NAME}/bin/"*
 
           # Create archives

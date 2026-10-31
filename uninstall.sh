@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+
 echo "=========================================================="
 echo "  LightOmen Linux: Complete Native System Uninstaller"
 echo "  Clean Removal of Daemons, Sockets, Drivers & Residues"
@@ -72,15 +74,25 @@ fi
 # 4. Remove DKMS Driver & Source
 echo -e "\n[4/7] Removing hp-omen-extra DKMS Driver..."
 if command -v dkms &>/dev/null; then
-    if dkms status -m hp-omen-extra 2>/dev/null | grep -q "hp-omen-extra"; then
-        echo "  -> Uninstalling DKMS module hp-omen-extra..."
-        dkms remove -m hp-omen-extra -v 2.2.0 --all 2>/dev/null || true
-        echo "  [OK] DKMS module uninstalled."
-    else
-        echo "  -> No active hp-omen-extra DKMS modules registered."
-    fi
+    for v in $(dkms status hp-omen-extra 2>/dev/null | grep -oP "(?<=hp-omen-extra[/, ])[^,:]+" | tr -d ' ' | sort -u); do
+        [ -n "$v" ] && dkms remove -m hp-omen-extra -v "$v" --all 2>/dev/null || true
+    done
 fi
-rm -rf /usr/src/hp-omen-extra-2.2.0
+dkms remove -m hp-omen-extra -v 2.2.0 --all 2>/dev/null || true
+rm -rf /usr/src/hp-omen-extra-*
+
+# Purge any custom .ko files in updates/ so the stock kernel module takes over
+KVER=$(uname -r)
+find /lib/modules/"$KVER" /usr/lib/modules/"$KVER" -name 'hp-omen-extra.ko*' -delete 2>/dev/null || true
+find /lib/modules/"$KVER" /usr/lib/modules/"$KVER" -path '*/updates/*' -name 'hp-wmi.ko*' -delete 2>/dev/null || true
+depmod -a
+
+# Restore stock kernel modules
+echo "  • Unloading custom DKMS modules and restoring stock kernel driver..."
+modprobe -r hp_omen_extra 2>/dev/null || true
+modprobe -r hp_wmi 2>/dev/null || true
+modprobe hp_wmi 2>/dev/null || true
+echo "  [OK] Custom DKMS modules removed and stock hp_wmi restored."
 
 # 5. Clean Up Kernel Autoload & Modprobe Configs
 echo -e "\n[5/7] Cleaning Up Kernel Modules Autoload & Modprobe Configs..."
@@ -107,9 +119,11 @@ echo -e "\n[6/7] Removing Executables, Icons & Desktop Integrations..."
 for bin in /usr/local/bin/lightomen-daemon \
            /usr/local/bin/lightomen-gui \
            /usr/local/bin/lightomen-tray \
+           /usr/local/bin/lightomen-uninstall \
            /usr/local/bin/ohman-daemon \
            /usr/local/bin/ohman-gui \
-           /usr/local/bin/ohman-tray; do
+           /usr/local/bin/ohman-tray \
+           /usr/local/bin/ohman-uninstall; do
     if [ -e "$bin" ]; then
         echo "  -> Removed binary: $bin"
         rm -f "$bin"
