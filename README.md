@@ -4,7 +4,8 @@
 
 Pure, idiomatic Rust with zero runtime bloat — no Tokio, no Serde, pure standard library, `libc`, and `evdev`. Consumes under 1 MB RAM in the background.
 
-![LightOmen UI](assets/lightomen.png)
+<img width="540" height="680" alt="image" src="https://github.com/user-attachments/assets/59eec412-7ffb-4c52-948a-4aca34d4c621" />
+
 
 ---
 
@@ -93,6 +94,39 @@ sudo ./scripts/verify_fan_hardware.sh
 ```
 
 ---
+
+## Screenshots
+
+<details>
+<summary> Home Screen</summary>
+
+<img src="https://github.com/user-attachments/assets/c520e177-61c5-42f8-8b77-1807c1d9bb52" width="540" alt="Home Screen" />
+
+</details>
+
+<details>
+<summary> Curve </summary>
+
+<img width="540" height="680" alt="image" src="https://github.com/user-attachments/assets/816f682b-04ed-43ae-8590-9d689b2868a9" />
+
+</details>
+ 
+
+<details>
+<summary> Graphics </summary>
+
+<img src="https://github.com/user-attachments/assets/db739fdc-28b1-4fae-aa1f-62c3830f50ca" width="540" alt="Settings Screen" />
+
+</details>
+
+<details>
+<summary> Settings </summary>
+
+<img src="https://github.com/user-attachments/assets/e2e54ffa-91c5-4d32-ba65-8fc1fc442964" width="540" alt="Additional Features" />
+
+</details>
+
+
 
 ## License
 
