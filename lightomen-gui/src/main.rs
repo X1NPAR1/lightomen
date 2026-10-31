@@ -162,10 +162,16 @@ struct LightOmenApp {
     active_drag_idx: Option<usize>,
     learn_started_at: Option<Instant>,
     specs: Option<SystemSpecs>,
+    needs_focus: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ctx_holder: std::sync::Arc<std::sync::Mutex<Option<egui::Context>>>,
+    reset_window_level_at: Option<Instant>,
 }
 
 impl LightOmenApp {
-    fn new() -> Self {
+    fn new(
+        needs_focus: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        ctx_holder: std::sync::Arc<std::sync::Mutex<Option<egui::Context>>>,
+    ) -> Self {
         Self::ensure_tray_running();
         let initial_status = Self::fetch_daemon_status().unwrap_or_default();
         let link_curves = Self::load_gui_config();
@@ -180,6 +186,9 @@ impl LightOmenApp {
             active_drag_idx: None,
             learn_started_at: None,
             specs: None,
+            needs_focus,
+            ctx_holder,
+            reset_window_level_at: None,
         }
     }
 
@@ -219,20 +228,31 @@ impl LightOmenApp {
 
         if !is_running {
             let tray_bin = if std::path::Path::new("/usr/local/bin/lightomen-tray").exists() {
-                "/usr/local/bin/lightomen-tray"
+                "/usr/local/bin/lightomen-tray".to_string()
             } else if std::path::Path::new("/usr/local/bin/ohman-tray").exists() {
-                "/usr/local/bin/ohman-tray"
+                "/usr/local/bin/ohman-tray".to_string()
+            } else if let Ok(exe) = std::env::current_exe() {
+                if let Some(parent) = exe.parent() {
+                    let cand = parent.join("lightomen-tray");
+                    if cand.exists() {
+                        cand.to_str().unwrap_or("lightomen-tray").to_string()
+                    } else {
+                        "lightomen-tray".to_string()
+                    }
+                } else {
+                    "lightomen-tray".to_string()
+                }
             } else {
-                "lightomen-tray"
+                "lightomen-tray".to_string()
             };
             // Run lightomen-tray in its own systemd user unit so that closing lightomen-gui
             // does NOT cause systemd to terminate lightomen-tray as part of GUI's cgroup.
             let res = Command::new("systemd-run")
-                .args(["--user", "--unit=lightomen-tray", "--collect", tray_bin])
+                .args(["--user", "--unit=lightomen-tray", "--collect", &tray_bin])
                 .spawn();
             if res.is_err() {
                 let _ = Command::new("nohup")
-                    .arg(tray_bin)
+                    .arg(&tray_bin)
                     .spawn();
             }
         }
@@ -319,7 +339,7 @@ impl LightOmenApp {
 
             if enable {
                 let _ = fs::create_dir_all(&autostart_dir);
-                let content = "[Desktop Entry]\nType=Application\nName=LightOmen Tray\nExec=env DRI_PRIME=0 __NV_PRIME_RENDER_OFFLOAD=0 /usr/local/bin/lightomen-tray\nHidden=false\nNoDisplay=false\nX-GNOME-Autostart-enabled=true\n";
+                let content = "[Desktop Entry]\nType=Application\nName=LightOmen Tray\nExec=env __NV_PRIME_RENDER_OFFLOAD=0 /usr/local/bin/lightomen-tray\nHidden=false\nNoDisplay=false\nX-GNOME-Autostart-enabled=true\n";
                 let _ = fs::write(desktop_path, content);
             } else {
                 let _ = fs::remove_file(desktop_path);
@@ -330,6 +350,29 @@ impl LightOmenApp {
 
 impl eframe::App for LightOmenApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Cache context for background IPC wakeup
+        if let Ok(mut guard) = self.ctx_holder.lock() {
+            if guard.is_none() {
+                *guard = Some(ctx.clone());
+            }
+        }
+
+        // Focus & bring-to-front handling when requested from tray / hotkey
+        if self.needs_focus.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
+            ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(egui::UserAttentionType::Critical));
+            self.reset_window_level_at = Some(Instant::now() + Duration::from_millis(250));
+        }
+
+        if let Some(reset_time) = self.reset_window_level_at {
+            if Instant::now() >= reset_time {
+                ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
+                self.reset_window_level_at = None;
+            }
+        }
+
         // Poll daemon regularly
         let interval = Duration::from_millis(self.status.config.probe_interval_ms as u64);
         if self.last_poll.elapsed() >= interval {
@@ -1657,9 +1700,46 @@ pub fn fan_speed_at(curve: &[u8; 7], temp: u16) -> u8 {
 
 fn main() -> eframe::Result<()> {
     // Force Mesa/integrated AMD graphics: never probe or wake NVIDIA dGPU
-    std::env::set_var("DRI_PRIME", "0");
+    std::env::remove_var("DRI_PRIME");
     std::env::set_var("__NV_PRIME_RENDER_OFFLOAD", "0");
     std::env::set_var("__GLX_VENDOR_LIBRARY_NAME", "mesa");
+
+    let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
+    let gui_sock = format!("{}/lightomen-gui.sock", runtime_dir);
+
+    // Single-instance check: If already running, notify it to focus and bring to front, then exit
+    if let Ok(mut stream) = UnixStream::connect(&gui_sock) {
+        let _ = stream.write_all(b"FOCUS\n");
+        let _ = stream.flush();
+        return Ok(());
+    }
+
+    let _ = fs::remove_file(&gui_sock);
+    let needs_focus = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let ctx_holder: std::sync::Arc<std::sync::Mutex<Option<egui::Context>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
+
+    if let Ok(listener) = std::os::unix::net::UnixListener::bind(&gui_sock) {
+        let nf = needs_focus.clone();
+        let holder = ctx_holder.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                if let Ok(mut s) = stream {
+                    let mut buf = [0u8; 16];
+                    if let Ok(n) = s.read(&mut buf) {
+                        if &buf[..n] == b"FOCUS\n" || &buf[..n] == b"FOCUS" {
+                            nf.store(true, std::sync::atomic::Ordering::SeqCst);
+                            if let Ok(guard) = holder.lock() {
+                                if let Some(ref c) = *guard {
+                                    c.request_repaint();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
 
     let icon = egui::IconData {
         rgba: icon_data::ICON_32_RGBA.to_vec(),
@@ -1678,11 +1758,16 @@ fn main() -> eframe::Result<()> {
         ..Default::default()
     };
 
-    eframe::run_native(
+    let nf_app = needs_focus.clone();
+    let holder_app = ctx_holder.clone();
+    let res = eframe::run_native(
         "LightOmen",
         native_options,
-        Box::new(|_cc| Ok(Box::new(LightOmenApp::new()))),
-    )
+        Box::new(move |_cc| Ok(Box::new(LightOmenApp::new(nf_app, holder_app)))),
+    );
+
+    let _ = fs::remove_file(&gui_sock);
+    res
 }
 
 #[cfg(test)]

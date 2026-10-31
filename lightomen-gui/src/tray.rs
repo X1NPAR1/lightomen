@@ -47,6 +47,17 @@ impl LightOmenTray {
         }
     }
 
+    fn show_or_focus_gui() {
+        let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
+        let gui_sock = format!("{}/lightomen-gui.sock", runtime_dir);
+        if let Ok(mut stream) = UnixStream::connect(&gui_sock) {
+            let _ = stream.write_all(b"FOCUS\n");
+            let _ = stream.flush();
+            return;
+        }
+        Self::send_ipc_cmd(CMD_SPAWN_GUI, &[]);
+    }
+
     fn fetch_status() -> Option<DaemonStatus> {
         let stream_opt = UnixStream::connect(SOCKET_PATH)
             .or_else(|_| UnixStream::connect(ALT_SOCKET_PATH));
@@ -129,7 +140,7 @@ impl Tray for LightOmenTray {
     }
 
     fn activate(&mut self, _x: i32, _y: i32) {
-        Self::send_ipc_cmd(CMD_SPAWN_GUI, &[]);
+        Self::show_or_focus_gui();
     }
 
     fn menu(&self) -> Vec<MenuItem<Self>> {
@@ -140,7 +151,7 @@ impl Tray for LightOmenTray {
             StandardItem {
                 label: "Open LightOmen".into(),
                 activate: Box::new(|_| {
-                    LightOmenTray::send_ipc_cmd(CMD_SPAWN_GUI, &[]);
+                    LightOmenTray::show_or_focus_gui();
                 }),
                 ..Default::default()
             }

@@ -265,9 +265,18 @@ impl HotkeyMonitor {
             .spawn();
     }
 
-    /// Spawns lightomen-gui in the active user session on Wayland
+    /// Spawns lightomen-gui in the active user session on Wayland, or brings it to the front if open
     pub fn spawn_gui() {
         let (target_user, target_uid, runtime_dir, wayland_disp) = Self::detect_user_session();
+
+        // 1. If GUI is already running, wake it and bring it to the front
+        let gui_sock = format!("{}/lightomen-gui.sock", runtime_dir);
+        if let Ok(mut stream) = std::os::unix::net::UnixStream::connect(&gui_sock) {
+            use std::io::Write;
+            let _ = stream.write_all(b"FOCUS\n");
+            let _ = stream.flush();
+            return;
+        }
 
         let binary_path = if Path::new("/usr/local/bin/lightomen-gui").exists() {
             "/usr/local/bin/lightomen-gui"
@@ -316,6 +325,11 @@ impl HotkeyMonitor {
             let _ = tray_cmd.spawn();
         }
 
+        // Clean up any failed transient service unit before launching
+        let _ = Command::new("systemctl")
+            .args([&machine_arg, "--user", "reset-failed", "lightomen-gui"])
+            .output();
+
         let mut cmd = Command::new("systemd-run");
         cmd.args([
             &machine_arg,
@@ -328,7 +342,7 @@ impl HotkeyMonitor {
         cmd.env("DBUS_SESSION_BUS_ADDRESS", &dbus_addr);
         cmd.env("WAYLAND_DISPLAY", &wayland_disp);
         cmd.env("DISPLAY", ":0");
-        cmd.env("DRI_PRIME", "0");
+        cmd.env_remove("DRI_PRIME");
         cmd.env("__NV_PRIME_RENDER_OFFLOAD", "0");
         cmd.env("__GLX_VENDOR_LIBRARY_NAME", "mesa");
 
@@ -341,7 +355,7 @@ impl HotkeyMonitor {
             direct.env("DBUS_SESSION_BUS_ADDRESS", &dbus_addr);
             direct.env("WAYLAND_DISPLAY", &wayland_disp);
             direct.env("DISPLAY", ":0");
-            direct.env("DRI_PRIME", "0");
+            direct.env_remove("DRI_PRIME");
             direct.env("__NV_PRIME_RENDER_OFFLOAD", "0");
             direct.env("__GLX_VENDOR_LIBRARY_NAME", "mesa");
             let _ = direct.spawn();
