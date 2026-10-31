@@ -15,8 +15,121 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REAL_USER="${SUDO_USER:-$USER}"
 USER_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
 
-# 1. Detect Desktop Session (Wayland vs X11)
-echo -e "\n[1/7] Detecting Display Session..."
+# 1. Terminate Existing Instances & Scan Running Processes
+echo -e "\n[1/8] Terminating Existing Instances & Scanning Running Processes..."
+
+# Stop systemd unit gracefully first if active
+if systemctl is-active --quiet lightomen-daemon.service 2>/dev/null; then
+    PREV_DAEMON_PID=$(systemctl show -p MainPID --value lightomen-daemon.service 2>/dev/null || true)
+    echo "  -> Stopping systemd service: lightomen-daemon.service (Main PID: $PREV_DAEMON_PID)..."
+    systemctl stop lightomen-daemon.service 2>/dev/null || true
+fi
+systemctl stop ohman-daemon.service 2>/dev/null || true
+systemctl disable ohman-daemon.service 2>/dev/null || true
+
+TARGET_PROCS=("lightomen-daemon" "ohman-daemon" "lightomen-gui" "ohman-gui" "lightomen-tray" "ohman-tray")
+for proc in "${TARGET_PROCS[@]}"; do
+    pids=$(pidof "$proc" 2>/dev/null || pgrep -f "/usr/local/bin/$proc" 2>/dev/null || true)
+    if [ -n "$pids" ]; then
+        echo "  -> Found active process: $proc (PID: $pids), terminating..."
+        kill -9 $pids 2>/dev/null || true
+        sleep 0.2
+        # Verify termination
+        check_pids=$(pidof "$proc" 2>/dev/null || pgrep -f "/usr/local/bin/$proc" 2>/dev/null || true)
+        if [ -z "$check_pids" ]; then
+            echo "     [OK] Terminated $proc (PID: $pids successfully exited)"
+        else
+            echo "     [WARNING] Process $proc still alive (PID: $check_pids)"
+        fi
+    else
+        echo "  -> $proc: No active instances running (Clean)"
+    fi
+done
+
+# 2. Clean Up System Residues, Blacklists & Legacy Artifacts
+echo -e "\n[2/8] Cleaning Up System Residues & Legacy Artifacts..."
+
+# Sockets & Runtime Directories
+echo "  • Checking runtime directories & Unix sockets..."
+for r_dir in /run/lightomen /run/ohman; do
+    if [ -e "$r_dir" ]; then
+        echo "    -> Removed runtime directory: $r_dir"
+        rm -rf "$r_dir"
+    fi
+done
+
+# Legacy modprobe blacklists and override configs
+echo "  • Checking /etc/modprobe.d/ for harmful blacklists..."
+FOUND_MODPROBE=0
+for f in /etc/modprobe.d/*hpwmi*.conf /etc/modprobe.d/*hp-wmi*.conf /etc/modprobe.d/*hp_wmi*.conf \
+         /etc/modprobe.d/*lightomen*.conf /etc/modprobe.d/*ohman*.conf /etc/modprobe.d/*hp-omen*.conf /etc/modprobe.d/*omen-extra*.conf; do
+    if [ -f "$f" ]; then
+        echo "    -> Removed blacklist config file: $f"
+        rm -f "$f"
+        FOUND_MODPROBE=1
+    fi
+done
+# Check if any blacklist line exists inside remaining .conf files
+if grep -E -q "blacklist[[:space:]]+(hp_wmi|hp-wmi|hp_omen_extra|hp-omen-extra)" /etc/modprobe.d/*.conf 2>/dev/null; then
+    echo "    -> Stripping blacklist lines from /etc/modprobe.d/*.conf..."
+    sed -i '/blacklist[[:space:]]\+hp_wmi/d' /etc/modprobe.d/*.conf 2>/dev/null || true
+    sed -i '/blacklist[[:space:]]\+hp-wmi/d' /etc/modprobe.d/*.conf 2>/dev/null || true
+    sed -i '/blacklist[[:space:]]\+hp_omen_extra/d' /etc/modprobe.d/*.conf 2>/dev/null || true
+    sed -i '/blacklist[[:space:]]\+hp-omen-extra/d' /etc/modprobe.d/*.conf 2>/dev/null || true
+    FOUND_MODPROBE=1
+fi
+if [ "$FOUND_MODPROBE" -eq 0 ]; then
+    echo "    [OK] No blacklist files or lines found in /etc/modprobe.d/ (Clean)"
+fi
+
+# Autostart entries
+echo "  • Checking user autostart entries..."
+if [ -n "$USER_HOME" ]; then
+    for a_file in "$USER_HOME/.config/autostart/ohman-gui.desktop" \
+                  "$USER_HOME/.config/autostart/ohman-tray.desktop" \
+                  "$USER_HOME/.config/autostart/lightomen-gui.desktop"; do
+        if [ -f "$a_file" ]; then
+            echo "    -> Removed stale autostart file: $a_file"
+            rm -f "$a_file"
+        fi
+    done
+fi
+
+# Binary and symlink cleanup
+echo "  • Checking /usr/local/bin/ legacy binaries and symlinks..."
+for b_file in /usr/local/bin/ohman-daemon /usr/local/bin/ohman-gui /usr/local/bin/ohman-tray; do
+    if [ -e "$b_file" ]; then
+        echo "    -> Cleaned legacy executable: $b_file"
+        rm -f "$b_file"
+    fi
+done
+
+# Configuration binary reset & backup
+echo "  • Checking persistent daemon configuration binary..."
+if [ -f /etc/lightomen/config.bin ]; then
+    echo "    -> Backing up old configuration: /etc/lightomen/config.bin -> /etc/lightomen/config.bin.bak"
+    cp /etc/lightomen/config.bin /etc/lightomen/config.bin.bak 2>/dev/null || true
+    rm -f /etc/lightomen/config.bin
+    echo "    -> Configuration reset to fresh, verified defaults (1100 RPM floor, auto 0-RPM unlatch)"
+else
+    echo "    [OK] No stale configuration binary found (Clean defaults will be generated)"
+fi
+rm -f /etc/ohman/config.bin 2>/dev/null || true
+
+# Put fans into safe BIOS Auto state during installation/build
+for h in /sys/class/hwmon/hwmon*; do
+    if [ -f "$h/name" ] && [ "$(cat "$h/name" 2>/dev/null)" = "hp" ]; then
+        if [ -w "$h/pwm1_enable" ]; then
+            echo 2 > "$h/pwm1_enable" 2>/dev/null || true
+            echo "  • Safety cooling reset: Hardware fans placed into BIOS Auto control."
+        fi
+        break
+    fi
+done
+sleep 1
+
+# 3. Detect Desktop Session (Wayland vs X11)
+echo -e "\n[3/8] Detecting Display Session..."
 WAYLAND_DETECTED=0
 if [ -n "$WAYLAND_DISPLAY" ] || [ -e "/run/user/$(id -u "$REAL_USER")/wayland-0" ]; then
     WAYLAND_DETECTED=1
@@ -25,8 +138,8 @@ else
     echo "  -> X11 / XWayland fallback session detected for user: $REAL_USER"
 fi
 
-# 2. Install Kernel & Build Dependencies
-echo -e "\n[2/7] Installing Kernel & System Dependencies..."
+# 4. Install Kernel & Build Dependencies
+echo -e "\n[4/8] Installing Kernel & System Dependencies..."
 if command -v apt-get &>/dev/null; then
     apt-get update -qq
     apt-get install -y -qq dkms build-essential linux-headers-"$(uname -r)" \
@@ -37,8 +150,8 @@ elif command -v dnf &>/dev/null; then
     dnf install -y -q dkms kernel-devel kernel-headers dbus-devel
 fi
 
-# 3. Adapt & Install hp-omen-extra DKMS Driver
-echo -e "\n[3/7] Installing Patched hp-omen-extra DKMS Driver..."
+# 5. Adapt & Install hp-omen-extra DKMS Driver
+echo -e "\n[5/8] Installing Patched hp-omen-extra DKMS Driver..."
 DKMS_SRC="/usr/src/hp-omen-extra-2.2.0"
 rm -rf "$DKMS_SRC"
 mkdir -p "$DKMS_SRC"
@@ -49,34 +162,21 @@ dkms add -m hp-omen-extra -v 2.2.0
 dkms build -m hp-omen-extra -v 2.2.0
 dkms install -m hp-omen-extra -v 2.2.0 --force
 
-# Modprobe override configuration
-cat << 'EOF' > /etc/modprobe.d/lightomen-hpwmi-override.conf
-# Prioritize patched hp-wmi and hp-omen-extra from DKMS updates
-blacklist hp_wmi
-install hp_wmi /sbin/modprobe --ignore-install hp_wmi $CMDLINE_OPTS
+# Autoload hp_wmi and hp_omen_extra on system boot
+mkdir -p /etc/modules-load.d
+cat << 'EOF' > /etc/modules-load.d/hp-omen-extra.conf
+# Autoload HP WMI and Omen modules for fan and thermal control
+hp_wmi
+hp_omen_extra
 EOF
+cp -f /etc/modules-load.d/hp-omen-extra.conf /etc/modules-load.d/lightomen.conf
 
-# Reload modules if possible
-modprobe -r hp_omen_extra 2>/dev/null || true
+# Load modules immediately
+modprobe hp_wmi 2>/dev/null || true
 modprobe hp_omen_extra 2>/dev/null || true
 
-# 4. Stop any existing running services/processes before binary installation
-echo -e "\n[4/7] Preparing system & stopping existing services..."
-systemctl stop lightomen-daemon.service 2>/dev/null || true
-systemctl stop ohman-daemon.service 2>/dev/null || true
-systemctl disable ohman-daemon.service 2>/dev/null || true
-pkill -9 -x lightomen-daemon 2>/dev/null || true
-pkill -9 -x ohman-daemon 2>/dev/null || true
-pkill -9 -x lightomen-gui 2>/dev/null || true
-pkill -9 -x ohman-gui 2>/dev/null || true
-pkill -9 -x lightomen-tray 2>/dev/null || true
-pkill -9 -x ohman-tray 2>/dev/null || true
-rm -rf /run/lightomen /run/ohman
-rm -f /usr/local/bin/ohman-daemon /usr/local/bin/ohman-gui /usr/local/bin/ohman-tray
-sleep 1
-
-# 5. Check for Pre-compiled Binaries or Build from Source
-echo -e "\n[5/7] Preparing Binaries..."
+# 6. Check for Pre-compiled Binaries or Build from Source
+echo -e "\n[6/8] Preparing Binaries..."
 DAEMON_SRC=""
 GUI_SRC=""
 TRAY_SRC=""
@@ -104,8 +204,8 @@ else
     exit 1
 fi
 
-# 6. Install Binaries, Symlinks, Icons & Desktop Files
-echo -e "\n[6/7] Installing Executables, Icons & Desktop Integration..."
+# 7. Install Binaries, Symlinks, Icons & Desktop Files
+echo -e "\n[7/8] Installing Executables, Icons & Desktop Integration..."
 install -m 755 "$DAEMON_SRC" /usr/local/bin/lightomen-daemon
 install -m 755 "$GUI_SRC" /usr/local/bin/lightomen-gui
 install -m 755 "$TRAY_SRC" /usr/local/bin/lightomen-tray
@@ -157,8 +257,6 @@ Hidden=false
 NoDisplay=false
 X-GNOME-Autostart-enabled=true
 EOF
-    rm -f "$USER_HOME/.config/autostart/ohman-gui.desktop" 2>/dev/null || true
-    rm -f "$USER_HOME/.config/autostart/lightomen-gui.desktop" 2>/dev/null || true
     chown -R "$REAL_USER:$REAL_USER" "$USER_HOME/.config/autostart"
 fi
 
@@ -181,22 +279,38 @@ if [ -n "$REAL_USER" ] && [ "$REAL_USER" != "root" ]; then
     echo "  -> lightomen-tray successfully spawned in system tray for $REAL_USER."
 fi
 
-# 7. Final Status & Verification Check
-echo -e "\n[7/7] Verifying Daemon Status & Safety Reset..."
+# 8. Final Status & Verification Check
+echo -e "\n[8/8] Verifying Daemon Status & Hardware Control Hand-off..."
 sleep 1.5
 if systemctl is-active --quiet lightomen-daemon.service; then
-    echo "  -> lightomen-daemon.service is ACTIVE and RUNNING."
+    NEW_DAEMON_PID=$(systemctl show -p MainPID --value lightomen-daemon.service 2>/dev/null || true)
+    echo "  -> lightomen-daemon.service is ACTIVE and RUNNING (PID: $NEW_DAEMON_PID)."
+    if [ -S "/run/lightomen/lightomen.sock" ]; then
+        echo "  -> Hardware Control Hand-off: SUCCESSFUL"
+        echo "     • Fan & Curve Control: Handed off to lightomen-daemon"
+        echo "     • Power Profile & TGP/PPAB: Handed off to lightomen-daemon"
+        echo "     • Hybrid/Discrete MUX: Handed off to lightomen-daemon"
+        echo "     • CPU Turbo Boost: Handed off to lightomen-daemon"
+        
+        # Live status probe
+        python3 -c "
+import socket, struct
+try:
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.connect('/run/lightomen/lightomen.sock')
+    s.sendall(struct.pack('<BBH64s', 1, 0, 0, b'\x00'*64))
+    data = s.recv(1024)
+    s.close()
+    cpu_t, gpu_t, f1, f2, cpwr, gpwr = struct.unpack_from('<HHHHII', data, 0)
+    fmode = data[37]
+    fmode_str = {0: 'Auto', 1: 'Max', 2: 'Curve'}.get(fmode, str(fmode))
+    print(f'     • Live Telemetry: CPU {cpu_t}°C, GPU {gpu_t}°C, Fan1 {f1} RPM, Fan2 {f2} RPM | Mode: {fmode_str}')
+except Exception as e:
+    pass
+" 2>/dev/null || true
+    fi
 else
     echo "  -> Warning: lightomen-daemon.service status check returned non-zero."
-fi
-
-# Ensure fans are unlatched and resting at Auto quiet speed
-if [ -e "/sys/devices/platform/hp-wmi/hwmon" ]; then
-    HWMON_DIR=$(find /sys/devices/platform/hp-wmi/hwmon -maxdepth 1 -name "hwmon*" | head -n 1)
-    if [ -n "$HWMON_DIR" ] && [ -w "$HWMON_DIR/pwm1_enable" ]; then
-        echo 2 > "$HWMON_DIR/pwm1_enable" 2>/dev/null || true
-        echo "  -> Motherboard cooling verified: BIOS Auto control active."
-    fi
 fi
 
 echo "=========================================================="

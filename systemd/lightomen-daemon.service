@@ -5,6 +5,8 @@ Documentation=https://github.com/lightomen-linux
 
 [Service]
 Type=simple
+ExecStartPre=-/sbin/modprobe hp_wmi
+ExecStartPre=-/sbin/modprobe hp_omen_extra
 ExecStart=/usr/local/bin/lightomen-daemon
 Restart=always
 RestartSec=2

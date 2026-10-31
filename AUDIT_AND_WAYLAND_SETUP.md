@@ -76,12 +76,12 @@ Unlike X11, Wayland compositors (Sway, Hyprland, GNOME Shell, KWin Wayland) enfo
    sudo dkms install -m hp-omen-extra -v 2.2.0 --force
    ```
 
-3. **Configure Modprobe Priority:**
-   Create `/etc/modprobe.d/lightomen-hpwmi-override.conf`:
+3. **Configure Module Autoloading:**
+   Ensure `/etc/modules-load.d/hp-omen-extra.conf` exists without any blacklists:
    ```text
-   # Prioritize DKMS patched hp-wmi and hp-omen-extra
-   blacklist hp_wmi
-   install hp_wmi /sbin/modprobe --ignore-install hp_wmi $CMDLINE_OPTS
+   # Autoload HP WMI and Omen modules for fan and thermal control
+   hp_wmi
+   hp_omen_extra
    ```
 
 4. **Verify Active Modules:**

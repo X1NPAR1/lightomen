@@ -13,6 +13,7 @@ pub struct HwmonBackend {
     fan1_target_path: Option<PathBuf>,
     fan2_target_path: Option<PathBuf>,
     fan_pwm_enable_path: Option<PathBuf>,
+    fan_pwm_duty_path: Option<PathBuf>,
     platform_profile_path: Option<PathBuf>,
     gpu_tgp_path: Option<PathBuf>,
     gpu_ppab_path: Option<PathBuf>,
@@ -31,6 +32,14 @@ pub struct HwmonBackend {
 
 impl HwmonBackend {
     pub fn new() -> Self {
+        // Ensure kernel modules are active before discovering hardware sysfs nodes
+        let _ = std::process::Command::new("/sbin/modprobe")
+            .arg("hp_wmi")
+            .status();
+        let _ = std::process::Command::new("/sbin/modprobe")
+            .arg("hp_omen_extra")
+            .status();
+
         let board_id = Self::read_board_id();
         let paths = Self::discover_hwmon_paths();
 
@@ -41,6 +50,7 @@ impl HwmonBackend {
         let fan1_target_path = paths.fan1_target;
         let fan2_target_path = paths.fan2_target;
         let fan_pwm_enable_path = paths.fan_pwm_enable;
+        let fan_pwm_duty_path = paths.fan_pwm_duty;
 
         let platform_profile_path = {
             let p = PathBuf::from("/sys/firmware/acpi/platform_profile");
@@ -111,6 +121,7 @@ impl HwmonBackend {
             fan1_target_path,
             fan2_target_path,
             fan_pwm_enable_path,
+            fan_pwm_duty_path,
             platform_profile_path,
             gpu_tgp_path,
             gpu_ppab_path,
@@ -314,8 +325,35 @@ impl HwmonBackend {
         0
     }
 
+    /// Dynamically discover and bind hwmon paths if they were not ready during initial startup
+    pub fn ensure_hwmon_paths(&mut self) {
+        if self.fan_pwm_enable_path.is_some() && self.fan1_target_path.is_some() {
+            return;
+        }
+        let paths = Self::discover_hwmon_paths();
+        if paths.fan_pwm_enable.is_some() {
+            if self.fan1_input_file.is_none() {
+                self.fan1_input_file = paths.fan1_input.and_then(|p| File::open(p).ok());
+            }
+            if self.fan2_input_file.is_none() {
+                self.fan2_input_file = paths.fan2_input.and_then(|p| File::open(p).ok());
+            }
+            if self.cpu_temp_file.is_none() {
+                self.cpu_temp_file = paths.cpu_temp.and_then(|p| File::open(p).ok());
+            }
+            self.fan1_target_path = paths.fan1_target;
+            self.fan2_target_path = paths.fan2_target;
+            self.fan_pwm_enable_path = paths.fan_pwm_enable;
+            self.fan_pwm_duty_path = paths.fan_pwm_duty;
+            if let Some(m) = paths.max_rpm {
+                self.max_rpm = m.clamp(4000, 7000);
+            }
+        }
+    }
+
     /// Read dynamic fan RPM directly from hp-wmi hwmon (fan1_input, fan2_input)
     pub fn read_fans(&mut self) -> (Option<u16>, Option<u16>) {
+        self.ensure_hwmon_paths();
         let f1 = Self::read_fd_number(&mut self.fan1_input_file).and_then(|r| {
             if (0..10000).contains(&r) {
                 Some(r as u16)
@@ -387,29 +425,63 @@ impl HwmonBackend {
         ok1 || ok2
     }
 
-    /// Apply fan speeds and modes via hp-wmi hwmon targets, pwm1_enable
+    /// Apply fan speeds and modes via hp-wmi hwmon targets, pwm1_enable, and pwm1 duty
     pub fn apply_fan_mode(&mut self, mode: u8, target1_rpm: u16, target2_rpm: u16) {
+        self.ensure_hwmon_paths();
+
         match mode {
             1 => {
                 // FAN_MODE_MAX (1):
-                // Directly write 0 to pwm1_enable. In hp-wmi, 0 triggers PWM_MODE_MAX
+                // Directly write 0 to pwm1_enable. In hp-wmi, 0 triggers PWM_MODE_MAX.
+                // Also write 255 to pwm1 duty if available for immediate responsiveness.
                 if self.last_applied_mode != Some(1) {
+                    let _ = Self::write_sysfs_string(&self.fan_pwm_duty_path, "255\n");
                     let _ = Self::write_sysfs_string(&self.fan_pwm_enable_path, "0\n");
                     self.last_applied_mode = Some(1);
+                    self.last_target1 = self.max_rpm;
+                    self.last_target2 = self.max_rpm;
                 }
             }
             2 => {
                 // FAN_MODE_CURVE (2):
-                // 0 RPM strictly stops the fans (Zero-RPM mode / Silent idle).
-                // Above 0, clamp to operational floor (1800 RPM..max_rpm).
-                let t1 = if target1_rpm == 0 { 0 } else { target1_rpm.clamp(1800, self.max_rpm) };
-                let t2 = if target2_rpm == 0 { 0 } else { target2_rpm.clamp(1800, self.max_rpm) };
+                // Operational spinning floor on Victus 16 (8BD4) / OMEN is 1100 RPM.
+                // 0 RPM means fan off (Silent idle / Zero-RPM mode).
+                let t1 = if target1_rpm == 0 { 0 } else { target1_rpm.clamp(1100, self.max_rpm) };
+                let t2 = if target2_rpm == 0 { 0 } else { target2_rpm.clamp(1100, self.max_rpm) };
+
+                let was_max = self.last_applied_mode == Some(1);
                 let mode_changed = self.last_applied_mode != Some(2);
+
+                if t1 == 0 && t2 == 0 {
+                    // When both fans are 0 RPM:
+                    // Sending {0,0} via manual 0x2E query freezes the EC and arms a 120s watchdog.
+                    // Instead, hand control over to BIOS (pwm1_enable = 2 AUTO mode).
+                    // In AUTO mode, BIOS naturally stops the fans when cold (<40°C) without EC lockup.
+                    if self.last_target1 != 0 || self.last_target2 != 0 || was_max || mode_changed {
+                        let _ = Self::write_sysfs_string(&self.fan_pwm_enable_path, "2\n");
+                        self.last_applied_mode = Some(2);
+                        self.last_target1 = 0;
+                        self.last_target2 = 0;
+                    }
+                    return;
+                }
+
+                // If recovering from MAX boost (0), reset EC lock by toggling 2 then 1
+                if was_max {
+                    let _ = Self::write_sysfs_string(&self.fan_pwm_enable_path, "2\n");
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    let _ = Self::write_sysfs_string(&self.fan_pwm_enable_path, "1\n");
+                } else if mode_changed || (self.last_target1 == 0 && self.last_target2 == 0) {
+                    // Switching from AUTO or 0-RPM into active manual spinning
+                    let _ = Self::write_sysfs_string(&self.fan_pwm_enable_path, "1\n");
+                }
+
                 let t1_diff = (t1 as i32 - self.last_target1 as i32).abs();
                 let t2_diff = (t2 as i32 - self.last_target2 as i32).abs();
 
                 // Only write when mode changed, targets shifted by >= 40 RPM, or transition to/from 0
                 if mode_changed
+                    || was_max
                     || t1_diff >= 40
                     || t2_diff >= 40
                     || (t1 == 0 && self.last_target1 != 0)
@@ -419,6 +491,13 @@ impl HwmonBackend {
                 {
                     let _ = Self::write_sysfs_string(&self.fan1_target_path, &format!("{}\n", t1));
                     let _ = Self::write_sysfs_string(&self.fan2_target_path, &format!("{}\n", t2));
+
+                    if self.fan_pwm_duty_path.is_some() {
+                        let primary = t1.max(t2);
+                        let duty = ((primary as u32 * 255) / self.max_rpm as u32).clamp(50, 255);
+                        let _ = Self::write_sysfs_string(&self.fan_pwm_duty_path, &format!("{}\n", duty));
+                    }
+
                     self.last_applied_mode = Some(2);
                     self.last_target1 = t1;
                     self.last_target2 = t2;
@@ -434,6 +513,8 @@ impl HwmonBackend {
                     }
                     let _ = Self::write_sysfs_string(&self.fan_pwm_enable_path, "2\n");
                     self.last_applied_mode = Some(0);
+                    self.last_target1 = 0;
+                    self.last_target2 = 0;
                 }
             }
         }
@@ -481,4 +562,24 @@ struct DiscoveredPaths {
     fan_pwm_enable: Option<PathBuf>,
     fan_pwm_duty: Option<PathBuf>,
     max_rpm: Option<u16>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_board_id_validity() {
+        let id = HwmonBackend::read_board_id();
+        assert_ne!(id[0], 0);
+        let id_str = std::str::from_utf8(&id).unwrap_or("");
+        assert!(id_str.starts_with("8BD4") || !id_str.is_empty());
+    }
+
+    #[test]
+    fn test_discovered_paths_default() {
+        let p = DiscoveredPaths::default();
+        assert!(p.cpu_temp.is_none());
+        assert!(p.fan1_target.is_none());
+    }
 }

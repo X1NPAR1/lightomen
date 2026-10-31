@@ -43,8 +43,8 @@ impl FanController {
             0
         } else {
             let rpm = (pct as u32 * max_rpm as u32 / 100) as u16;
-            // Floor of functional spinning speed is ~1800 RPM
-            rpm.clamp(1800, max_rpm)
+            // Floor of functional spinning speed is 1100 RPM on HP Victus (8BD4) and OMEN
+            rpm.clamp(1100, max_rpm)
         }
     }
 
@@ -81,7 +81,10 @@ impl FanController {
 
                 let target2 = if gpu_temp == 0 {
                     // NVIDIA dGPU is in D3cold power-saving sleep
-                    if on_battery && gpu_zero_rpm_enabled == 1 {
+                    if target1 == 0 {
+                        // When CPU is cold enough for 0 RPM (Silent / Zero-RPM mode), keep both fans silent!
+                        0
+                    } else if on_battery && gpu_zero_rpm_enabled == 1 {
                         // On battery with Zero-RPM enabled:
                         // Shared heatsink safety: if CPU exceeds 75°C, engage Fan 2 to assist
                         if cpu_temp >= 75 {
@@ -90,9 +93,9 @@ impl FanController {
                             0 // Full Zero-RPM silent mode on battery!
                         }
                     } else {
-                        // On AC or Zero-RPM disabled: maintain quiet operational idle airflow
+                        // On AC: track CPU target gently or maintain quiet operational airflow
                         let gpu_pct = Self::evaluate_curve(gpu_curve, 35);
-                        Self::pct_to_rpm(gpu_pct, max_rpm).max(1800).min(2400)
+                        Self::pct_to_rpm(gpu_pct, max_rpm).min(target1)
                     }
                 } else {
                     let gpu_pct = Self::evaluate_curve(gpu_curve, gpu_temp);
@@ -132,6 +135,7 @@ mod tests {
     fn test_evaluate_curve_zero_rpm() {
         let curve = [0, 20, 30, 40, 50, 60, 100];
         assert_eq!(FanController::evaluate_curve(&curve, 25), 0);
+        assert_eq!(FanController::evaluate_curve(&curve, 29), 0);
         assert_eq!(FanController::evaluate_curve(&curve, 30), 0);
         assert_eq!(FanController::evaluate_curve(&curve, 32), 0);
         assert_eq!(FanController::evaluate_curve(&curve, 34), 0);
@@ -145,7 +149,62 @@ mod tests {
         assert_eq!(FanController::pct_to_rpm(0, max), 0);
         assert_eq!(FanController::pct_to_rpm(100, max), 5800);
         assert_eq!(FanController::pct_to_rpm(50, max), 2900);
-        // Minimum functional floor clamps < 1800 to 1800 when pct > 0
-        assert_eq!(FanController::pct_to_rpm(10, max), 1800);
+        // Minimum functional floor clamps < 1100 to 1100 when pct > 0
+        assert_eq!(FanController::pct_to_rpm(10, max), 1100);
+        assert_eq!(FanController::pct_to_rpm(18, max), 1100);
+        assert_eq!(FanController::pct_to_rpm(20, max), 1160);
+    }
+
+    #[test]
+    fn test_zero_rpm_to_spinup_progression() {
+        let curve = [0, 20, 30, 40, 50, 60, 100];
+        let max_rpm = 5800;
+
+        // At 29°C (cold boot): 0% -> 0 RPM
+        let pct_29 = FanController::evaluate_curve(&curve, 29);
+        assert_eq!(pct_29, 0);
+        assert_eq!(FanController::pct_to_rpm(pct_29, max_rpm), 0);
+
+        // At 35°C: 10% -> 1100 RPM (quiet physical floor)
+        let pct_35 = FanController::evaluate_curve(&curve, 35);
+        assert_eq!(pct_35, 10);
+        assert_eq!(FanController::pct_to_rpm(pct_35, max_rpm), 1100);
+
+        // At 40°C: 20% -> 1160 RPM
+        let pct_40 = FanController::evaluate_curve(&curve, 40);
+        assert_eq!(pct_40, 20);
+        assert_eq!(FanController::pct_to_rpm(pct_40, max_rpm), 1160);
+
+        // At 60°C: 40% -> 2320 RPM
+        let pct_60 = FanController::evaluate_curve(&curve, 60);
+        assert_eq!(pct_60, 40);
+        assert_eq!(FanController::pct_to_rpm(pct_60, max_rpm), 2320);
+
+        // At 90°C: 100% -> 5800 RPM
+        let pct_90 = FanController::evaluate_curve(&curve, 90);
+        assert_eq!(pct_90, 100);
+        assert_eq!(FanController::pct_to_rpm(pct_90, max_rpm), 5800);
+    }
+
+    #[test]
+    fn test_evaluate_curve_monotonic() {
+        let curve = [0, 20, 30, 40, 50, 60, 100];
+        let mut prev = 0;
+        for temp in 20..=105 {
+            let pct = FanController::evaluate_curve(&curve, temp);
+            assert!(pct >= prev, "Curve decreased at temp {}: {} < {}", temp, pct, prev);
+            prev = pct;
+        }
+    }
+
+    #[test]
+    fn test_pct_to_rpm_various_max() {
+        for max_rpm in [4500, 5000, 5800, 6000, 6400] {
+            assert_eq!(FanController::pct_to_rpm(0, max_rpm), 0);
+            assert_eq!(FanController::pct_to_rpm(1, max_rpm), 1100);
+            assert_eq!(FanController::pct_to_rpm(100, max_rpm), max_rpm);
+            let mid = FanController::pct_to_rpm(50, max_rpm);
+            assert_eq!(mid, max_rpm / 2);
+        }
     }
 }
