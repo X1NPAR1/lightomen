@@ -292,7 +292,7 @@ cat << 'EOF' > /usr/share/applications/lightomen.desktop
 Name=LightOmen
 GenericName=HP Omen & Victus Controller
 Comment=Hardware Performance, Fan Curve & MUX Switch Controller
-Exec=env DRI_PRIME=0 __NV_PRIME_RENDER_OFFLOAD=0 /usr/local/bin/lightomen-gui
+Exec=env __NV_PRIME_RENDER_OFFLOAD=0 __GLX_VENDOR_LIBRARY_NAME=mesa /usr/local/bin/lightomen-gui
 Icon=lightomen
 Terminal=false
 Type=Application
@@ -310,7 +310,7 @@ if [ -n "$USER_HOME" ]; then
 Type=Application
 Name=LightOmen Tray
 Comment=LightOmen Hardware Tray Controller
-Exec=env DRI_PRIME=0 __NV_PRIME_RENDER_OFFLOAD=0 /usr/local/bin/lightomen-tray
+Exec=env __NV_PRIME_RENDER_OFFLOAD=0 __GLX_VENDOR_LIBRARY_NAME=mesa /usr/local/bin/lightomen-tray
 Hidden=false
 NoDisplay=false
 X-GNOME-Autostart-enabled=true

@@ -53,9 +53,49 @@ impl LightOmenTray {
         if let Ok(mut stream) = UnixStream::connect(&gui_sock) {
             let _ = stream.write_all(b"FOCUS\n");
             let _ = stream.flush();
+            Self::activate_window_native();
             return;
         }
         Self::send_ipc_cmd(CMD_SPAWN_GUI, &[]);
+    }
+
+    fn activate_window_native() {
+        let script = r#"
+            let clients = workspace.windowList();
+            for (let i = 0; i < clients.length; i++) {
+                let c = clients[i];
+                if (c.resourceClass === 'lightomen' || c.caption.indexOf('LightOmen') !== -1) {
+                    c.minimized = false;
+                    workspace.activeWindow = c;
+                    break;
+                }
+            }
+        "#;
+        let mut temp = std::env::temp_dir();
+        temp.push("lightomen_focus_tray.js");
+        if let Ok(mut f) = std::fs::File::create(&temp) {
+            let _ = f.write_all(script.as_bytes());
+            let _ = f.flush();
+            if let Ok(output) = std::process::Command::new("qdbus6")
+                .args(["org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting.loadScript", temp.to_str().unwrap_or(""), "lightomen_focus_tray"])
+                .output()
+            {
+                let sid = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !sid.is_empty() {
+                    let _ = std::process::Command::new("qdbus6")
+                        .args(["org.kde.KWin", &format!("/Scripting/Script{}", sid), "org.kde.kwin.Script.run"])
+                        .output();
+                    let _ = std::process::Command::new("qdbus6")
+                        .args(["org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting.unloadScript", "lightomen_focus_tray"])
+                        .output();
+                }
+            }
+            let _ = std::fs::remove_file(&temp);
+        }
+
+        let _ = std::process::Command::new("wmctrl")
+            .args(["-x", "-a", "lightomen"])
+            .spawn();
     }
 
     fn fetch_status() -> Option<DaemonStatus> {
@@ -247,13 +287,14 @@ impl Tray for LightOmenTray {
 fn apply_refresh_rate(hz: u32) {
     let mode_arg = format!("1920x1080@{}", hz);
     let _ = std::process::Command::new("kscreen-doctor")
+        .arg(format!("output.eDP-1.mode.{}", mode_arg))
         .arg(format!("output.1.mode.{}", mode_arg))
         .spawn();
 }
 
 fn main() {
     // Force Mesa/integrated AMD graphics: never probe or wake NVIDIA dGPU
-    std::env::set_var("DRI_PRIME", "0");
+    std::env::remove_var("DRI_PRIME");
     std::env::set_var("__NV_PRIME_RENDER_OFFLOAD", "0");
     std::env::set_var("__GLX_VENDOR_LIBRARY_NAME", "mesa");
 
@@ -274,7 +315,7 @@ fn main() {
         if let Some(status) = LightOmenTray::fetch_status() {
             let on_bat = status.on_battery == 1;
             if prev_on_battery != Some(on_bat) {
-                if prev_on_battery.is_some() && status.config.low_hz_on_battery() == 1 {
+                if status.config.low_hz_on_battery() == 1 {
                     apply_refresh_rate(if on_bat { 60 } else { 144 });
                 }
                 prev_on_battery = Some(on_bat);

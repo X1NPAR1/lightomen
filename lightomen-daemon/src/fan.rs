@@ -14,7 +14,7 @@ impl FanController {
             return curve[0];
         }
         if temp >= CURVE_TEMPS[6] as u16 {
-            return curve[6].max(100);
+            return curve[6];
         }
 
         for i in 0..6 {
@@ -62,8 +62,8 @@ impl FanController {
     ) {
         let max_rpm = hwmon.max_rpm;
 
-        // >=90°C EMERGENCY MAX OVERRIDE
-        if cpu_temp >= 90 || gpu_temp >= 90 {
+        // EMERGENCY MAX OVERRIDE: CPU >= 95°C or GPU >= 90°C
+        if cpu_temp >= 95 || gpu_temp >= 90 {
             hwmon.apply_fan_mode(FAN_MODE_MAX, max_rpm, max_rpm);
             return;
         }

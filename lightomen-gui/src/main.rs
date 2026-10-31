@@ -346,6 +346,48 @@ impl LightOmenApp {
             }
         }
     }
+
+    /// Brings the LightOmen GUI window to the front and focuses it natively under KWin Wayland or X11
+    pub fn activate_window_native() {
+        // 1. KWin Wayland DBus scripting
+        let script = r#"
+            let clients = workspace.windowList();
+            for (let i = 0; i < clients.length; i++) {
+                let c = clients[i];
+                if (c.resourceClass === 'lightomen' || c.caption.indexOf('LightOmen') !== -1) {
+                    c.minimized = false;
+                    workspace.activeWindow = c;
+                    break;
+                }
+            }
+        "#;
+        let mut temp = std::env::temp_dir();
+        temp.push("lightomen_focus.js");
+        if let Ok(mut f) = fs::File::create(&temp) {
+            let _ = f.write_all(script.as_bytes());
+            let _ = f.flush();
+            if let Ok(output) = Command::new("qdbus6")
+                .args(["org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting.loadScript", temp.to_str().unwrap_or(""), "lightomen_focus"])
+                .output()
+            {
+                let sid = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !sid.is_empty() {
+                    let _ = Command::new("qdbus6")
+                        .args(["org.kde.KWin", &format!("/Scripting/Script{}", sid), "org.kde.kwin.Script.run"])
+                        .output();
+                    let _ = Command::new("qdbus6")
+                        .args(["org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting.unloadScript", "lightomen_focus"])
+                        .output();
+                }
+            }
+            let _ = fs::remove_file(&temp);
+        }
+
+        // 2. X11 / XWayland wmctrl fallback
+        let _ = Command::new("wmctrl")
+            .args(["-x", "-a", "lightomen"])
+            .spawn();
+    }
 }
 
 impl eframe::App for LightOmenApp {
@@ -363,6 +405,7 @@ impl eframe::App for LightOmenApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
             ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(egui::UserAttentionType::Critical));
+            Self::activate_window_native();
             self.reset_window_level_at = Some(Instant::now() + Duration::from_millis(250));
         }
 
@@ -1035,14 +1078,21 @@ impl LightOmenApp {
                         if let Some(m) = mouse_pos {
                             let rel_y = (m.y - (rect.min.y + pad_t)).clamp(0.0, plot_h);
                             let pct_float = (1.0 - (rel_y / plot_h)) * 100.0;
-                            // ClampOrOff: dragging near bottom (< 10%) snaps to 0% (Fan Off / 0 RPM).
-                            // Above 10%, starts from hardware operational floor of 18%..100% (~1800..6000 RPM).
-                            let raw_pct = if pct_float < 10.0 {
-                                0u8
+                            // ClampOrOff: Only point 0 (30°C / idle) can be 0% (Fan Off / 0 RPM).
+                            // Points 1..5 (40°C..80°C) must be in operational spinning range (18%..100%).
+                            // Point 6 (90°C) is fixed at 100% for thermal safety.
+                            let raw_pct = if i == 0 {
+                                if pct_float < 10.0 {
+                                    0u8
+                                } else {
+                                    pct_float.round().clamp(18.0, 100.0) as u8
+                                }
+                            } else if i == 6 {
+                                100u8
                             } else {
                                 pct_float.round().clamp(18.0, 100.0) as u8
                             };
-                            let new_pct = if i == 6 { 100 } else { raw_pct };
+                            let new_pct = raw_pct;
 
                             if self.link_curves {
                                 self.status.config.cpu_curve[i] = new_pct;
@@ -1680,7 +1730,7 @@ pub fn fan_speed_at(curve: &[u8; 7], temp: u16) -> u8 {
         return curve[0];
     }
     if temp >= CURVE_TEMPS[6] as u16 {
-        return curve[6].max(100);
+        return curve[6];
     }
     for i in 0..6 {
         let t0 = CURVE_TEMPS[i] as u16;

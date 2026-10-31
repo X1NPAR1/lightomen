@@ -466,14 +466,8 @@ impl HwmonBackend {
                     return;
                 }
 
-                // If recovering from MAX boost (0), disengage firmware max-fan bit by toggling 2 then 1
-                if was_max {
-                    let _ = Self::write_sysfs_string(&self.fan_pwm_enable_path, "2\n");
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                    let _ = Self::write_sysfs_string(&self.fan_pwm_enable_path, "1\n");
-                    std::thread::sleep(std::time::Duration::from_millis(20));
-                } else if mode_changed || (self.last_target1 == 0 && self.last_target2 == 0) {
-                    // Switching from AUTO or 0-RPM into active manual spinning
+                // Switching from AUTO, MAX, or 0-RPM into active manual spinning
+                if was_max || mode_changed || (self.last_target1 == 0 && self.last_target2 == 0) {
                     let _ = Self::write_sysfs_string(&self.fan_pwm_enable_path, "1\n");
                     std::thread::sleep(std::time::Duration::from_millis(20));
                 }

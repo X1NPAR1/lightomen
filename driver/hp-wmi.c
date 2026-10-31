@@ -1157,7 +1157,11 @@ static int hp_wmi_fan_speed_reset(struct hp_wmi_hwmon_priv *priv)
 	} else if (is_victus_thermal_profile()) {
 		ret = platform_profile_victus_set_ec(active_platform_profile);
 	} else if (is_victus_s_thermal_profile()) {
-		if (priv->prev_mode == PWM_MODE_MANUAL && active_thermal_profile_params) {
+		/*
+		 * [LIGHTOMEN PATCH]: Avoid triggering userdefine mode (WMI 0x10) when
+		 * transitioning from MAX or MANUAL back to AUTO. Directly set thermal profile.
+		 */
+		if ((priv->prev_mode == PWM_MODE_MANUAL || priv->prev_mode == PWM_MODE_MAX) && active_thermal_profile_params) {
 			u8 tp = (active_platform_profile == PLATFORM_PROFILE_PERFORMANCE)
 				? active_thermal_profile_params->performance
 				: (active_platform_profile == PLATFORM_PROFILE_LOW_POWER)
@@ -2655,6 +2659,7 @@ static int platform_profile_victus_s_set_ec(
 	enum platform_profile_option profile)
 {
 	const struct thermal_profile_params *params;
+	struct hp_wmi_hwmon_priv *priv;
 	bool gpu_ctgp_enable, gpu_ppab_enable;
 	/* dstate: 1=100%, 2=50%, 3=25%, 4=12.5% */
 	u8 gpu_dstate;
@@ -2689,7 +2694,14 @@ static int platform_profile_victus_s_set_ec(
 		return -EOPNOTSUPP;
 	}
 
-	hp_wmi_get_fan_count_userdefine_trigger();
+	/*
+	 * [LIGHTOMEN PATCH]: Only send userdefine trigger if fan control is not in AUTO mode.
+	 * Triggering WMI 0x10 in automatic mode causes the EC to lock fans at 0 RPM
+	 * or latch user-defined control on Victus-S series laptops.
+	 */
+	priv = hp_wmi_platform_dev ? platform_get_drvdata(hp_wmi_platform_dev) : NULL;
+	if (!priv || priv->mode != PWM_MODE_AUTO)
+		hp_wmi_get_fan_count_userdefine_trigger();
 
 	err = omen_thermal_profile_set(tp);
 	if (err < 0) {

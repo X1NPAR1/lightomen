@@ -260,6 +260,7 @@ impl HotkeyMonitor {
                 &machine_arg,
                 "--quiet",
                 "kscreen-doctor",
+                &format!("output.eDP-1.mode.{}", mode_arg),
                 &format!("output.1.mode.{}", mode_arg),
             ])
             .spawn();
