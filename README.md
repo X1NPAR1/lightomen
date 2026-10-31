@@ -100,7 +100,8 @@ sudo ./scripts/verify_fan_hardware.sh
 <details>
 <summary> Home Screen</summary>
 
-<img src="https://github.com/user-attachments/assets/c520e177-61c5-42f8-8b77-1807c1d9bb52" width="540" alt="Home Screen" />
+<img width="540" height="680" alt="image" src="https://github.com/user-attachments/assets/b2abe5fa-a20f-406a-8e2d-0878fec4763b" />
+
 
 </details>
 
